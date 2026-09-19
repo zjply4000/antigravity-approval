@@ -1,5 +1,6 @@
 # tests/test_install_hook.py
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -14,5 +15,7 @@ def test_render_produces_valid_json_with_absolute_path():
     hook = rule["hooks"][0]
     assert "multi_replace_file_content" in rule["matcher"]
     cmd = hook["command"]
-    assert str(root.as_posix() + "/.venv/Scripts/python.exe") in cmd
+    venv_rel = ".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python"
+    assert str(root.as_posix() + "/" + venv_rel) in cmd
+    assert "{{VENV_PYTHON}}" not in rendered
     assert "{{EVALUATOR_DIR}}" not in rendered

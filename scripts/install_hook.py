@@ -12,7 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def render(root: Path) -> str:
     template = (root / "hooks.template.json").read_text(encoding="utf-8")
-    return template.replace("{{EVALUATOR_DIR}}", root.as_posix())
+    venv_py = venv_python(root).as_posix()
+    return template.replace("{{VENV_PYTHON}}", venv_py).replace("{{EVALUATOR_DIR}}", root.as_posix())
 
 def venv_python(root: Path) -> Path:
     return root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
