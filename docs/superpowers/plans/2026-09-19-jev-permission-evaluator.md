@@ -280,10 +280,31 @@ git commit -m "feat: settings loading with env/file precedence and safe fallback
 
 **Files:**
 - Create: `src/jev_eval/logging_setup.py`
+- Create: `tests/conftest.py` (hermetic singleton reset; see step 1b)
 - Test: `tests/test_logging_setup.py`
 
 **Interfaces:**
 - Produces: `build_audit_logger(log_file: Path) -> logging.Logger` (JSONL, rotating 5 MB × 3, idempotent), `audit(logger, **fields) -> None` (adds `ts`, never raises).
+
+- [ ] **Step 1b: Create the test-isolation fixture**
+
+pytest ≥9 attaches capture handlers to non-propagating loggers, which defeats a plain handler reset; the fixture must restore `propagate` too:
+
+```python
+# tests/conftest.py
+import logging
+
+import pytest
+
+@pytest.fixture(autouse=True)
+def _reset_audit_logger():
+    logger = logging.getLogger("jev_eval.audit")
+    logger.handlers.clear()
+    logger.propagate = True
+    yield
+    logger.handlers.clear()
+    logger.propagate = True
+```
 
 - [ ] **Step 1: Write the failing test**
 
