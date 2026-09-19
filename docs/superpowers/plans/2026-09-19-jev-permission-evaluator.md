@@ -1496,6 +1496,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1505,6 +1506,9 @@ def run_hook(payload: str, extra_env: dict | None = None, importtime: bool = Fal
     env = dict(os.environ)
     env.pop("TYPESAFE_API_KEY", None)  # keep tests network-free
     env.update(extra_env or {})
+    tmp_home = tempfile.mkdtemp()
+    env["USERPROFILE"] = tmp_home   # redirect Path.home() on Windows (config + audit log)
+    env["HOME"] = tmp_home          # redirect Path.home() on POSIX
     cmd = [sys.executable]
     if importtime:
         cmd.append("-X")
