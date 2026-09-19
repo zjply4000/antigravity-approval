@@ -1,0 +1,63 @@
+# src/jev_eval/decide.py
+"""Pure tiered decision matrix (spec §5). No I/O."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .config import Settings
+from .deterministic import evaluate_tool_call
+from .jev_client import Verdict
+
+@dataclass(frozen=True)
+class Decision:
+    decision: str   # allow | deny | ask | force_ask
+    reason: str
+    tier: str       # blocklist | whitelist | path_guard | network_gate | write_policy | jev | fallback
+    category: str | None = None
+    confidence: float | None = None
+    latency_ms: int | None = None
+
+def extract_args(tool_name: str, args: dict) -> dict:
+    args = args or {}
+
+    def pick(*keys: str) -> str:
+        for key in keys:
+            value = args.get(key)
+            if value:
+                return str(value)
+        return ""
+
+    if tool_name == "run_command":
+        return {"command": pick("CommandLine", "command"),
+                "cwd": pick("Cwd", "cwd"), "target": ""}
+    if tool_name in ("write_to_file", "replace_file_content", "multi_replace_file_content"):
+        return {"command": "", "cwd": pick("Cwd", "cwd"),
+                "target": pick("TargetFile", "AbsolutePath", "target_file", "file_path", "filePath")}
+    return {"command": "", "cwd": "", "target": ""}
+
+def finalize_tier2(settings: Settings, verdict: Verdict | None) -> Decision:
+    """Matrix rows 5, 6, 8."""
+    if verdict is None:
+        if settings.fail_mode == "open":
+            return Decision("allow", "JEV_FAIL_MODE=open: tier-2 unavailable", "fallback")
+        return Decision("ask", "tier-2 evaluation unavailable (timeout/error/missing key)",
+                        "fallback")
+    approvable = (verdict.category in ("read_only", "standard_dev")
+                  or (verdict.category == "network_outbound" and settings.allow_network_commands))
+    summary = f"jev: {verdict.category} conf={verdict.confidence:.3f}"
+    if approvable and verdict.confidence >= settings.confidence_threshold:
+        return Decision("allow", summary, "jev", verdict.category, verdict.confidence,
+                        verdict.latency_ms)
+    return Decision("ask", f"{summary} below threshold or disallowed category", "jev",
+                    verdict.category, verdict.confidence, verdict.latency_ms)
+
+def decide(tool_name: str, raw_args: dict, workspace_paths: list[str], settings: Settings,
+           verdict: Verdict | None) -> Decision:
+    ex = extract_args(tool_name, raw_args)
+    t1 = evaluate_tool_call(tool_name, ex["command"], ex["cwd"], ex["target"],
+                            workspace_paths, settings.allow_network_commands)
+    if t1 is not None:
+        return Decision(t1.decision, t1.reason, t1.tier)
+    if tool_name == "run_command":
+        return finalize_tier2(settings, verdict)
+    return Decision("ask", f"unhandled tool {tool_name!r}", "fallback")
