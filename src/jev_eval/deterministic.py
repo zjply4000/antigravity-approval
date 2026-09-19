@@ -143,3 +143,83 @@ def is_whitelisted(tokens: list[str]) -> bool:
         return False
     lowered = [t.lower() for t in tokens]
     return any(lowered[:len(prefix)] == list(prefix) for prefix in _WHITELIST_PREFIXES)
+
+from typing import NamedTuple
+
+class Tier1Outcome(NamedTuple):
+    decision: str  # allow | deny | ask | force_ask
+    reason: str
+    tier: str      # blocklist | whitelist | path_guard | network_gate | write_policy | fallback
+
+def _norm(p: str) -> str:
+    return os.path.normcase(os.path.abspath(os.path.expanduser(p)))
+
+def _inside(path: str, roots: list[str]) -> bool:
+    return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
+
+def _system_dirs() -> list[str]:
+    dirs = ["/etc", "/usr", "/bin", os.path.expanduser("~/.ssh")]
+    for var in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)"):
+        val = os.environ.get(var)
+        if val:
+            dirs.append(val)
+    return [_norm(d) for d in dirs]
+
+def check_file_target(target: str, cwd: str, workspace_paths: list[str]) -> str | None:
+    """Strict dual containment: lexical abspath AND realpath must be inside a workspace."""
+    if not target:
+        return "file tool missing target path"
+    p = os.path.expanduser(target)
+    if not os.path.isabs(p):
+        p = os.path.join(cwd or os.getcwd(), p)
+    lex = _norm(p)
+    real = _norm(os.path.realpath(p))
+    roots = [_norm(w) for w in (workspace_paths or [])]
+    lex_in, real_in = _inside(lex, roots), _inside(real, roots)
+    if not (lex_in and real_in):
+        if lex_in != real_in:
+            return (f"junction/symlink target outside workspace "
+                    f"(lex inside={lex_in}, realpath inside={real_in})")
+        return "target path outside workspace"
+    for d in _system_dirs():
+        if _inside(lex, [d]) or _inside(real, [d]):
+            return "target path in system directory"
+    return None
+
+_FILE_TOOLS = frozenset({"write_to_file", "replace_file_content", "multi_replace_file_content"})
+
+def evaluate_tool_call(tool_name: str, command: str, cwd: str, target: str,
+                       workspace_paths: list[str], allow_network: bool) -> Tier1Outcome | None:
+    """Matrix rows 1-4 and 7. None = run_command falls through to Tier 2 (or unknown tool)."""
+    if tool_name in _FILE_TOOLS:
+        reason = check_file_target(target, cwd, workspace_paths)
+        if reason:
+            return Tier1Outcome("deny", reason, "path_guard")
+        return Tier1Outcome("ask", "file mutations are not auto-approved in v1", "write_policy")
+    if tool_name != "run_command":
+        return None
+    segments = split_chain(command)
+    if not segments:
+        return Tier1Outcome("ask", "empty or unparsable command", "fallback")
+    subst = [has_substitution(seg) for seg in segments]
+    for seg, is_subst in zip(segments, subst):
+        scans = [_mask_quoted(seg, "\"'")]
+        if is_subst:
+            scans.append(seg)  # raw text: masking would hide $(rm
+        for scanned in scans:
+            hit = next((label for pattern, label in _BLOCKLIST_TESTS if pattern.search(scanned)), None)
+            if hit:
+                return Tier1Outcome("deny", f"blocklist: {hit}", "blocklist")
+    whitelisted = True
+    for seg, is_subst in zip(segments, subst):
+        tokens = tokenize(seg)
+        if tokens is None or is_subst or has_write_operator(seg) or not is_whitelisted(tokens):
+            whitelisted = False
+            break
+    if whitelisted:
+        return Tier1Outcome("allow", "whitelist: read-only command", "whitelist")
+    if not allow_network:
+        for seg, tokens in ((s, tokenize(s)) for s in segments):
+            if is_network_command(seg, tokens):
+                return Tier1Outcome("force_ask", f"network command: {seg!r}", "network_gate")
+    return None

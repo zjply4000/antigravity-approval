@@ -112,3 +112,76 @@ def test_whitelist_rejects():
 def test_git_branch_not_whitelisted():
     assert is_whitelisted(["git", "branch"]) is False
     assert is_whitelisted(["git", "branch", "-D", "feature"]) is False
+
+import os
+import subprocess
+import sys
+import pytest
+from jev_eval.deterministic import check_file_target, evaluate_tool_call
+
+def test_target_inside_workspace_ok(tmp_path):
+    assert check_file_target(str(tmp_path / "a.py"), str(tmp_path), [str(tmp_path)]) is None
+
+def test_target_escape_denied(tmp_path):
+    reason = check_file_target("C:/Windows/System32/x", str(tmp_path), [str(tmp_path)])
+    assert reason is not None
+
+@pytest.mark.skipif(sys.platform != "win32", reason="NTFS junctions")
+def test_junction_escape_denied_with_named_reason(tmp_path):
+    real_dir = tmp_path / "elsewhere"; real_dir.mkdir()
+    ws = tmp_path / "ws"; ws.mkdir()
+    junction = ws / "linked"
+    subprocess.run(["cmd", "/c", "mklink", "/J", str(junction), str(real_dir)], check=True,
+                   capture_output=True)
+    reason = check_file_target(str(junction / "f.txt"), str(ws), [str(ws)])
+    assert reason is not None and "junction" in reason
+
+def test_missing_target_denied():
+    assert check_file_target("", "C:/ws", ["C:/ws"]) is not None
+
+def test_run_command_whitelisted_allows():
+    out = evaluate_tool_call("run_command", "git status", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "allow" and out.tier == "whitelist"
+
+def test_pipeline_consumers_whitelisted():
+    out = evaluate_tool_call("run_command", "git log | Out-Host", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "allow"
+
+def test_blocklisted_denies():
+    out = evaluate_tool_call("run_command", "git status && rm -rf /", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "deny" and out.tier == "blocklist"
+
+def test_redirection_demotes_to_tier2():
+    out = evaluate_tool_call("run_command", "echo hi > src/x.py", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is None  # falls through to Tier 2
+
+def test_network_force_ask():
+    out = evaluate_tool_call("run_command", "curl http://x", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "force_ask" and out.tier == "network_gate"
+
+def test_package_manager_force_ask():
+    out = evaluate_tool_call("run_command", "npm install left-pad", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "force_ask"
+
+def test_network_allowed_when_flag_true():
+    out = evaluate_tool_call("run_command", "curl http://x", "C:/ws", "",
+                             ["C:/ws"], allow_network=True)
+    assert out is None  # gate bypassed; Tier 2 decides
+
+def test_file_tool_asks_after_path_guard():
+    out = evaluate_tool_call("write_to_file", "", "C:/ws", "C:/ws/a.py",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "ask" and out.tier == "write_policy"
+
+def test_empty_command_asks():
+    out = evaluate_tool_call("run_command", "", "C:/ws", "", ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "ask" and out.tier == "fallback"
+
+def test_unknown_tool_falls_through():
+    assert evaluate_tool_call("manage_task", "", "", "", [], allow_network=False) is None
