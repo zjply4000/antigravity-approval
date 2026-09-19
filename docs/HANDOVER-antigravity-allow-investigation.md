@@ -2,7 +2,14 @@
 
 **Purpose of this document:** let a fresh session (or a person) resume the open investigation without re-deriving anything. Everything below is evidence-backed; timestamps are local (UTC+8), 2026-09-19.
 
-**Repo:** `D:\Projects\Jev\antigravity-approval` · branch `main` · HEAD `3176f48` · suite: **76 passed, 0 warnings**
+**Repo:** `D:\Projects\Jev\antigravity-approval` · branch `main` · HEAD `db0f2d9` · suite: **76 passed, 0 warnings**
+
+## ⚠️ Update (same day, ~21:15): two corrections to the earlier account
+
+1. **The user's "ABCD all failed" report is disputed.** The user now recalls Test B (`stub_allow.py`) *working*. The evidence cannot settle which report was right (stubs do not write to the audit log), so treat the ladder result as **uncertain** and rerun Test B validly (§6).
+2. **Config contamination by a second agent (critical).** VS Code Local History (`.history/.agents/`) reconstructs the actual edit sequence of `hooks.json`: `20:52 stub_allow.py → 21:05 jev_evaluator.py → 21:06 stub_allow.py → 21:07 stub_allow_readstdin.py → 21:08 stub_allow_delay.py` — and then, **after 21:08 with no history snapshot**, the command was rewritten to `C:/Progra~1/LibreOffice/program/python.exe …/jev_evaluator.py`. Neither the user nor this session made that edit; it matches the "2 files changed" chip shown in the Antigravity UI — **the Antigravity agent itself edited the hook config mid-investigation.** Any test result measured under that config is invalid (wrong interpreter for our script). Current `hooks.json` has been restored to `stub_allow.py` (venv python) for the user's retry; the original probe log (through 21:05) predates this edit.
+
+**Lesson for anyone continuing:** before trusting any test result, verify `hooks.json`'s current `command` line against `.history/.agents/` — other agents with write access can and do mutate it.
 
 ---
 
@@ -186,3 +193,39 @@ Get-ChildItem $env:USERPROFILE\.gemini\antigravity\crashes | Sort LastWriteTime 
 - **Grants are a confounder.** Any dialog the user answered with an "always allow" option creates standing permission that silently masks whether the hook worked. Always test with a fresh command in a fresh conversation.
 - **A running hook process is not proof of a working hook.** The probe log proves execution; only the transcript (`GENERIC` step after `PLANNER_RESPONSE`) proves the effect.
 - **Two separate bugs may be interleaved**: the `allow`-not-honored problem, and executor instability (restarts/crashes). The stubs failed identically, which argues the first is independent of the second — but re-verify once the executor is stable.
+
+---
+
+## 10. Follow-up results (21:24–21:36)
+
+The open bisection is complete on Antigravity IDE / language server `2.5.5`.
+
+1. The first Probe F attempt was invalid because it ran in a different open
+   workspace (`flood-control-setting-system`), whose logs showed that the target
+   project's `.agents/hooks.json` was not loaded.
+2. A new IDE window was opened directly on
+   `D:\Projects\Jev\antigravity-approval`; its Git log confirmed that exact
+   repository path.
+3. **Valid Probe F:** `allow` plus an exact `permissionOverrides` entry still
+   produced the permission dialog. Its transcript stopped at `PLANNER_RESPONSE`.
+4. **Probe E:** the deny stub wrote its lifecycle marker at `21:32:57`, and the
+   same conversation's transcript recorded an immediate tool-call denial with
+   the exact stub reason. This proves the host both reads and acts on hook stdout.
+5. **Probe G:** the installed binary exposes deprecated `allowTool` / `denyReason`
+   fields and a `migrateDeprecatedFields` symbol. A diagnostic stub emitting only
+   `{"allowTool": true}` ran (marker at `21:36:05`) but still produced the
+   permission dialog.
+
+**Conclusion:** this build has an asymmetric host bug: `deny` is honored, while
+all tested positive paths (`decision: allow`, `allow` plus temporary grant, and
+legacy `allowTool`) fall through to the ordinary permission prompt. No further
+repo-side output variants should be guessed. A submission-ready report is in
+`docs/BUGREPORT-antigravity-pretooluse-allow-ignored.md`.
+
+**Environment note:** the original `.venv` is currently broken because its
+`pyvenv.cfg` points to a removed Python 3.10 installation. Diagnostic stubs were
+run with LibreOffice's bundled Python 3.12 (stdlib only). `.agents/hooks.json`
+has been restored to the real evaluator using that interpreter. Tier 1 was
+verified locally (`allow` for a whitelist command and `deny` for a blocklisted
+command); Tier 2 safely falls back to `ask` because `typesafe-sdk` is not present
+in that interpreter. Rebuild the project venv before expecting live Tier 2.
