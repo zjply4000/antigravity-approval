@@ -1,7 +1,7 @@
 # Jev Permission Evaluator for Antigravity — Design Spec (v1)
 
 - **Date:** 2026-09-19
-- **Status:** Approved design, pending implementation plan · **Rev 2 (2026-09-19):** security & platform review patches — redirection/substitution/`&`/newline bypass fixes, stdout purity, lazy SDK import, venv-aware hook generation, explicit Jev criteria
+- **Status:** Approved design, pending implementation plan · **Rev 3 (2026-09-19):** runtime review patches — PascalCase arg normalization, quote-stripping tokenizer + quoted-span-masked blocklist, read-only pipeline consumers, strict dual path containment (junction-aware), hard external deadline for the SDK call, explicit flush/exit contract, `multi_replace_file_content` matcher
 - **Scope:** v1 = PreToolUse hook evaluator only. No CDP bridge, no file-write auto-approval.
 
 ## 1. Problem & Goals
@@ -31,7 +31,7 @@ From the official docs (antigravity.google/docs/hooks) and community verificatio
 
 - **Config locations:** workspace `.agents/hooks.json` (all flavors); global `~/.gemini/config/hooks.json`.
 - **Structure:** named hook → `{enabled, PreToolUse: [{matcher, hooks: [{type: "command", command, timeout}]}]}`. `matcher` is a regex over tool names; `timeout` is in seconds (default 30).
-- **Input (stdin JSON):** `toolCall: {name, args}`, `stepIdx`, `conversationId`, `workspacePaths: string[]`, `transcriptPath`, `artifactDirectoryPath`, `modelName`. The event name is **not** in the payload — pass it via argv.
+- **Input (stdin JSON):** `toolCall: {name, args}`, `stepIdx`, `conversationId`, `workspacePaths: string[]`, `transcriptPath`, `artifactDirectoryPath`, `modelName`. The event name is **not** in the payload — pass it via argv. Arg keys are **PascalCase** and tool-specific (`run_command`: `CommandLine`, `Cwd`, `WaitMsBeforeAsync`; file tools: `TargetFile`, `AbsolutePath`) — extraction normalizes casing (§6.5).
 - **Output (stdout JSON)** — the decision contract is JSON, **not exit codes**:
   - `"allow"` — auto-approve
   - `"deny"` — hard block immediately
@@ -102,7 +102,7 @@ Exit codes are irrelevant to decisions: the process exits 0 after printing a dec
 | # | Situation | Decision |
 |---|---|---|
 | 1 | Command matches blocklist (any shell) | `deny` + reason |
-| 2 | File tool target resolves outside `workspacePaths`, or into a system directory | `deny` + reason |
+| 2 | File tool target escapes containment — lexically or via symlink/junction resolution — or lands in a system directory | `deny` + reason (names junction/symlink escape when detected) |
 | 3 | Every segment tokenizes to a whitelisted read-only pattern, with no redirections, write operators, or substitution constructs anywhere in the command | `allow` + reason |
 | 4 | Network command (curl/ssh-class, or package-manager install/publish form) and `ALLOW_NETWORK_COMMANDS=false` | `force_ask` + reason |
 | 5 | `run_command`, Jev: confidence ≥ threshold ∧ (category ∈ {read_only, standard_dev} ∨ (category = network_outbound ∧ ALLOW_NETWORK_COMMANDS=true)) | `allow` + reason incl. category/confidence |
@@ -145,6 +145,21 @@ antigravity-approval/
 
 **Stdout purity:** `sys.stdout` carries exactly one write — the final decision as `json.dumps(...)` (ASCII-escaped, so Windows code pages can't break encoding). At entrypoint startup, all diagnostics are forced to `sys.stderr`: `warnings.filterwarnings` mutes Python warnings, `logging` is rooted to stderr, and SDK loggers inherit that. A chatty dependency (retry logs, deprecation notices) can therefore never corrupt Antigravity's JSON parsing of stdout.
 
+**Exit contract:**
+
+```python
+try:
+    decision = run_pipeline(...)
+    sys.stdout.write(json.dumps(decision))
+except Exception as e:
+    sys.stdout.write(json.dumps({"decision": "ask", "reason": f"evaluator crash: {e}"}))
+finally:
+    sys.stdout.flush()
+    sys.exit(0)
+```
+
+The explicit flush before `sys.exit(0)` avoids buffered output being dropped when the process is spawned through GUI subprocess pipes on Windows.
+
 **Lazy imports:** only `jev_client` touches `typesafe_sdk`, and only inside its evaluate function. `config`, `deterministic`, `decide`, and `logging_setup` are standard-library-only, so Tier 1 paths never pay the SDK's pydantic/HTTP import cost (~100+ ms).
 
 ### 6.2 Configuration (`config.py`)
@@ -166,13 +181,13 @@ Worst-case Tier 2 wall time: 2 attempts × timeout + backoff ≈ 2.2 s at defaul
 ### 6.3 Deterministic engine (`deterministic.py`)
 
 - **Chain splitting:** after masking quoted spans and redirection forms (`2>&1`, `&>`, `>&`, digit-prefixed `1>`/`2>`), split on unquoted `&&`, `||`, `;`, `|`, **single `&`** (cmd.exe chain / bash background), and raw newlines (`\r?\n`). Every segment must clear on its own — a single unclear segment demotes the whole command.
-- **Tokenizer:** platform-aware; quoting-preserving (`shlex`-style, POSIX mode off, so Windows paths and quoted arguments survive intact).
+- **Tokenizer:** platform-aware (`shlex`-style, POSIX mode off, so escape backslashes in Windows paths survive) — then strips **one layer of matched enclosing quotes** from each token. `posix=False` retains quotes, so a quoted binary (`"git" status`) would otherwise fail first-token prefix matching and demote trivial commands to Tier 2.
 - **Write operators (disqualify from whitelist → Tier 2):** any unquoted `>`, `>>`, `1>`, `2>`, `&>`, `>|`, or write cmdlets/aliases `Out-File`, `Set-Content`, `Add-Content`, `tee`. `echo`, `cat`, and friends are whitelisted only when the segment carries none of these — `echo "payload" > src/critical.py` is a write, not a read.
 - **Substitution constructs (disqualify from whitelist → Tier 2):** unquoted backticks, `$(`, `<(` (process substitution), PowerShell subexpressions. Their contents still undergo blocklist analysis (below) — embedding `rm -rf` inside `$( )` is a deny, not an escape hatch.
-- **Blocklist → deny** (case-insensitive, compiled once at import): POSIX (`rm -rf`, `rm -fr`, `mkfs`, `dd if=`, fork bomb `:(){:|:&};:`), PowerShell (`Remove-Item` with `-Recurse`+`-Force`, `format-volume`), cmd.exe (`del /s`, `rd /s`, `rmdir /s`), credential access (`.ssh`, `.aws`, `.gnupg` paths in commands), and remote-code-execution patterns (`curl|wget … | sh|bash`, `iex(iwr …)`, `Invoke-Expression` + download combos). Patterns match the **token sequence** of a segment (tokens joined with single spaces), so quoted prose like `git commit -m "fixed the rm -rf bug"` doesn't false-deny. Segments flagged as substitution-bearing are **additionally scanned as raw text** — the tokenizer glues `$(rm` into a single token, which would otherwise hide the pattern.
+- **Blocklist → deny** (case-insensitive, compiled once at import): POSIX (`rm -rf`, `rm -fr`, `mkfs`, `dd if=`, fork bomb `:(){:|:&};:`), PowerShell (`Remove-Item` with `-Recurse`+`-Force`, `format-volume`), cmd.exe (`del /s`, `rd /s`, `rmdir /s`), credential access (`.ssh`, `.aws`, `.gnupg` paths in commands), and remote-code-execution patterns (`curl|wget … | sh|bash`, `iex(iwr …)`, `Invoke-Expression` + download combos). Patterns scan each segment's text with **quoted spans masked out** — masking (not token-joining) is what protects quoted prose: `git commit -m "fixed the rm -rf bug"` scans as `git commit -m ◇`, whereas joining stripped tokens back into one string would still contain `rm -rf` and false-deny. Segments flagged as substitution-bearing are **additionally scanned as raw text, quoted content included** — the tokenizer glues `$(rm` into a single token that masking would otherwise hide, and over-blocking inside substitutions is acceptable (they are already disqualified from the whitelist).
 - **Network gate → force_ask** (when `ALLOW_NETWORK_COMMANDS=false`): first token of any segment in `curl`, `wget`, `ssh`, `scp`, `sftp`, `nc`, `ncat`, `telnet`, `ftp`, `Invoke-WebRequest`, `iwr`, `Invoke-RestMethod`, `irm` — plus **package-manager install/publish forms** (`npm|pnpm|yarn|bun|pip|pip3|uv|poetry|cargo|dotnet|gem|composer` followed by `install|i|add|publish`), because package installs contact external servers and Jev must never be the only barrier in front of them.
-- **Whitelist → allow** (tokenized prefix match; **every segment** must be whitelisted): `git status|diff|log|show|branch`, `ls`, `dir`, `pwd`, `echo`, `cat`, `type`, `Get-Content`, `python --version`, `node --version`, and equivalent read-only invocations. The concrete list ships as a module-level constant in `deterministic.py` and is fully enumerated by unit tests — no command is whitelisted implicitly.
-- **Path guard (file tools):** resolve target against CWD; deny if it escapes every entry in `workspacePaths` (realpath containment check) or lands in system directories (`%SystemRoot%`, `%ProgramFiles%`, `/etc`, `/usr`, `/bin`, `~/.ssh`).
+- **Whitelist → allow** (tokenized prefix match; **every segment** must be whitelisted): `git status|diff|log|show|branch`, `ls`, `dir`, `pwd`, `echo`, `cat`, `type`, `Get-Content`, `python --version`, `node --version`, plus **read-only pipeline consumers** — `Select-String`, `grep`, `findstr`, `head`, `tail`, `more`, `Out-Host` — so standard `git log | Out-Host` / `git status | Select-String "modified"` pipes stay in Tier 1 instead of falling through to Jev. The concrete list ships as a module-level constant in `deterministic.py` and is fully enumerated by unit tests — no command is whitelisted implicitly.
+- **Path guard (file tools):** a target is contained only if **both** `os.path.abspath(target)` (lexical, drive/case-normalized) **and** `os.path.realpath(target)` resolve inside some `workspacePaths` entry. Strict dual containment — not either-or — keeps a workspace symlink/junction pointing at `~/.ssh` or another drive a `deny`; when the two resolutions differ, the reason names it ("junction/symlink target outside workspace") so legitimate junction users get a diagnosable message instead of a mystery denial. Also deny system directories (`%SystemRoot%`, `%ProgramFiles%`, `/etc`, `/usr`, `/bin`, `~/.ssh`).
 
 ### 6.4 Jev client (`jev_client.py`)
 
@@ -186,12 +201,15 @@ Wraps the SDK behind one function: `evaluate_command(command, cwd, workspace_pat
     - `network_outbound` — **any** contact with servers beyond the machine, including package installs (`npm install`, `pip install`, `cargo add`), `git fetch`/`pull`/`push`, `curl`/`wget`, API calls — even when the intent is a routine dev workflow.
     - `destructive` — destroys or irreversibly alters data: deleting files, force-overwriting, and **discarding uncommitted work** (`git reset --hard`, `git checkout -- .`, `git clean`), even when routine for the agent.
 - Imports `typesafe_sdk` **lazily, inside the evaluate function** — Tier 1 paths never load the SDK or its pydantic/HTTP dependency tree (see §6.1).
+- Enforces a **hard external wall-clock deadline** around the SDK call (`EVAL_TIMEOUT_MS + 500 ms`, via a worker future): SDK/socket timeouts do not bound DNS resolution or pre-handshake connection stalls, so the caller never trusts the SDK's `RetryPolicy` alone — deadline expiry returns `None` → `ask`. Where the SDK surfaces connect/read knobs, they are set explicitly (`connect=1.0 s`, `read=EVAL_TIMEOUT_MS`).
 - Normalizes the answer to `Verdict(category, confidence, latency_ms)`; returns `None` for any `TypeSafeAPIError`, timeout, missing key, or malformed answer (missing confidence, unknown category value) — callers then apply the fail-mode.
 - Records latency around the `system_one` call for the audit log.
 
 ### 6.5 Decision core (`decide.py`)
 
 Pure functions: `decide(tool_name, args, workspace_paths, config, verdict) -> Decision(decision, reason)`. No I/O. All matrix rows (§5) implemented here; `verdict=None` means Tier 2 unavailable → row 8. This is the unit under test for threshold boundaries.
+
+**Arg extraction** normalizes Antigravity's PascalCase keys with lowercase fallback, per tool: `command = args.get("CommandLine") or args.get("command") or ""`, `cwd = args.get("Cwd") or args.get("cwd") or os.getcwd()`, `target = args.get("TargetFile") or args.get("AbsolutePath") or args.get("target_file") or args.get("file_path")`. An unrecognized tool name, or an empty extraction where one is required, routes to `ask` with a diagnostic reason — never guessed.
 
 ### 6.6 Logging (`logging_setup.py`)
 
@@ -213,7 +231,7 @@ Hook config embeds machine-specific absolute paths, so it is **generated, not co
     "enabled": true,
     "PreToolUse": [
       {
-        "matcher": "run_command|write_to_file|replace_file_content",
+        "matcher": "run_command|write_to_file|replace_file_content|multi_replace_file_content",
         "hooks": [
           {
             "type": "command",
@@ -227,7 +245,7 @@ Hook config embeds machine-specific absolute paths, so it is **generated, not co
 }
 ```
 
-The explicit venv interpreter is mandatory: a GUI-spawned bare `python` may resolve to the wrong system interpreter without `typesafe-sdk` installed. `--event` argv flag because the payload omits the event name; `timeout: 10` seconds is the backstop. If the interpreter itself fails to spawn, Antigravity proceeds with its default interactive prompt — fail-closed by construction; `install_hook.py` validates the interpreter and dependency at install time.
+The explicit venv interpreter is mandatory: a GUI-spawned bare `python` may resolve to the wrong system interpreter without `typesafe-sdk` installed. The matcher includes `multi_replace_file_content` so batched edits still pass the path guard — ungoverned, they would bypass the deny-on-escape check entirely and fall to the unmanaged default prompt. `--event` argv flag because the payload omits the event name; `timeout: 10` seconds is the backstop. If the interpreter itself fails to spawn, Antigravity proceeds with its default interactive prompt — fail-closed by construction; `install_hook.py` validates the interpreter and dependency at install time.
 
 ## 7. Error Handling Summary
 
@@ -246,10 +264,10 @@ The explicit venv interpreter is mandatory: a GUI-spawned bare `python` may reso
 
 ## 8. Testing Plan
 
-- **Unit (`test_deterministic.py`):** whitelist hits (`git status`, `ls -la`) → allow; blocklist per shell (`rm -rf /`, `Remove-Item -Recurse -Force`, `rd /s /q`) → deny; chained `git status && rm -rf /` → deny; **single-`&` chain** `git status & rmdir /s /q build` → deny; **newline-chained** commands split before analysis; `git status && npm test` → demote to Tier 2; network gate → force_ask; **package-manager forms** (`npm install pkg`, `pip install requests`) → force_ask; path guard escapes (`..\..\Windows\System32\...`, `/etc/passwd`) → deny; quoting (`git commit -m "a && rm -rf /"` is one segment, no false split, no false deny); **redirection disqualification** (`echo hi > src/x.py`, `Get-Content a | Out-File b`, `cat f | tee g`) → Tier 2, not allow; **`2>&1` mask** (`git diff 2>&1` stays whitelisted); **quoted `>` is not a write** (`echo "a > b"` stays whitelisted); **substitutions** (`git log "$(rm -rf /)"` → deny via raw-text scan; ``echo `date` `` → Tier 2).
-- **Unit (`test_decide.py`):** threshold boundary 0.9599 → ask / 0.96 → allow; category `destructive`/`network_outbound` from Jev → ask; verdict None in closed mode → ask, in open mode → allow; write tools → ask after path-guard pass.
-- **Unit (`test_jev_client.py`):** SDK mocked: happy path, `TypeSafeAPIError(429)` → None, timeout → None, missing confidence → None; latency recorded; SDK imported only at first evaluate call (lazy).
-- **E2E (`test_e2e.py`):** run `scripts/jev_evaluator.py` as subprocess; fixtures in `tests/fixtures/` replicate real Antigravity payload shapes (run_command, write_to_file, replace_file_content); cases: benign → allow, destructive → deny, malformed JSON → ask with exit 0; **stdout purity** — stdout parses as exactly one JSON object with diagnostics on stderr; **lazy import** — a whitelist-only run under `python -X importtime` shows no `typesafe_sdk` import.
+- **Unit (`test_deterministic.py`):** whitelist hits (`git status`, `ls -la`) → allow; **quoted binary** (`"git" status`) → allow (quote-stripped tokens); **pipeline consumers** (`git log | Out-Host`, `git status | Select-String "modified"`) → allow; blocklist per shell (`rm -rf /`, `Remove-Item -Recurse -Force`, `rd /s /q`) → deny; chained `git status && rm -rf /` → deny; **single-`&` chain** `git status & rmdir /s /q build` → deny; **newline-chained** commands split before analysis; `git status && npm test` → demote to Tier 2; network gate → force_ask; **package-manager forms** (`npm install pkg`, `pip install requests`) → force_ask; path guard escapes (`..\..\Windows\System32\...`, `/etc/passwd`) → deny; **junction escape** — target whose lexical path is inside the workspace but whose realpath resolves outside → deny with junction-named reason (test creates a real junction on win32, skipped elsewhere); quoting (`git commit -m "a && rm -rf /"` is one segment, no false split, **no false deny via quoted-span masking**); **redirection disqualification** (`echo hi > src/x.py`, `Get-Content a | Out-File b`, `cat f | tee g`) → Tier 2, not allow; **`2>&1` mask** (`git diff 2>&1` stays whitelisted); **quoted `>` is not a write** (`echo "a > b"` stays whitelisted); **substitutions** (`git log "$(rm -rf /)"` → deny via raw-text scan; ``echo `date` `` → Tier 2).
+- **Unit (`test_decide.py`):** threshold boundary 0.9599 → ask / 0.96 → allow; category `destructive`/`network_outbound` from Jev → ask; verdict None in closed mode → ask, in open mode → allow; write tools → ask after path-guard pass; **arg normalization** — PascalCase (`{"CommandLine": "git status", "Cwd": "..."}`) and lowercase (`{"command": "git status"}`) payloads extract identically; missing keys / unknown tool → ask with diagnostic reason.
+- **Unit (`test_jev_client.py`):** SDK mocked: happy path, `TypeSafeAPIError(429)` → None, timeout → None, missing confidence → None; latency recorded; SDK imported only at first evaluate call (lazy); **SDK call sleeping past the hard external deadline** → None → ask.
+- **E2E (`test_e2e.py`):** run `scripts/jev_evaluator.py` as subprocess; fixtures in `tests/fixtures/` replicate real Antigravity payload shapes (run_command with PascalCase keys, write_to_file, replace_file_content, multi_replace_file_content); cases: benign → allow, destructive → deny, malformed JSON → ask with exit 0; **stdout purity** — stdout parses as exactly one JSON object with diagnostics on stderr; **flush/exit** — exit code 0 on every path, output complete; **lazy import** — a whitelist-only run under `python -X importtime` shows no `typesafe_sdk` import.
 - **Manual smoke (not CI):** `scripts/smoke_live.py` — one real Jev call with `npm test`, prints verdict + latency; run once after configuring the key.
 
 ## 9. Security Considerations
