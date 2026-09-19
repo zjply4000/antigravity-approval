@@ -108,3 +108,7 @@ def test_whitelist_rejects():
     assert not is_whitelisted(["git", "push"])
     assert not is_whitelisted(["rm", "-rf", "/"])
     assert not is_whitelisted(["npm", "run", "deploy"])
+
+def test_git_branch_not_whitelisted():
+    assert is_whitelisted(["git", "branch"]) is False
+    assert is_whitelisted(["git", "branch", "-D", "feature"]) is False

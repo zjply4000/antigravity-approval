@@ -707,6 +707,10 @@ def test_whitelist_rejects():
     assert not is_whitelisted(["git", "push"])
     assert not is_whitelisted(["rm", "-rf", "/"])
     assert not is_whitelisted(["npm", "run", "deploy"])
+
+def test_git_branch_not_whitelisted():
+    assert is_whitelisted(["git", "branch"]) is False
+    assert is_whitelisted(["git", "branch", "-D", "feature"]) is False
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -734,7 +738,7 @@ def is_network_command(segment: str, tokens: list[str] | None) -> bool:
     return first in _NETWORK_FIRST or bool(_PKG_INSTALL_RE.match(segment.strip()))
 
 _WHITELIST_PREFIXES: tuple[tuple[str, ...], ...] = (
-    ("git", "status"), ("git", "diff"), ("git", "log"), ("git", "show"), ("git", "branch"),
+    ("git", "status"), ("git", "diff"), ("git", "log"), ("git", "show"),
     ("git", "--version"),
     ("ls",), ("dir",), ("pwd",), ("echo",), ("cat",), ("type",), ("get-content",),
     ("select-string",), ("grep",), ("findstr",), ("head",), ("tail",), ("more",), ("out-host",),

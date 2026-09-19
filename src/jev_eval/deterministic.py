@@ -130,7 +130,7 @@ def is_network_command(segment: str, tokens: list[str] | None) -> bool:
     return first in _NETWORK_FIRST or bool(_PKG_INSTALL_RE.match(segment.strip()))
 
 _WHITELIST_PREFIXES: tuple[tuple[str, ...], ...] = (
-    ("git", "status"), ("git", "diff"), ("git", "log"), ("git", "show"), ("git", "branch"),
+    ("git", "status"), ("git", "diff"), ("git", "log"), ("git", "show"),
     ("git", "--version"),
     ("ls",), ("dir",), ("pwd",), ("echo",), ("cat",), ("type",), ("get-content",),
     ("select-string",), ("grep",), ("findstr",), ("head",), ("tail",), ("more",), ("out-host",),
