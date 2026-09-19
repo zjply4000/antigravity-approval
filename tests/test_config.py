@@ -34,3 +34,9 @@ def test_invalid_values_fall_back_to_defaults(tmp_path):
     assert s.confidence_threshold == 0.96
     assert s.eval_timeout_ms == 100   # -5 parses but clamps to the 100 ms floor
     assert s.fail_mode == "closed"
+
+def test_non_utf8_env_file_falls_back_to_defaults(tmp_path):
+    user = tmp_path / "user.env"
+    user.write_bytes("CONFIDENCE_THRESHOLD=0.7\n".encode("utf-16"))
+    s = load_settings(env={}, user_file=user, workspace_dir=None)
+    assert s.confidence_threshold == 0.96  # unreadable file treated as absent

@@ -31,7 +31,7 @@ _DEFAULTS: dict[str, str] = {
 def _parse_env_file(path: Path) -> dict[str, str]:
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return {}
     out: dict[str, str] = {}
     for line in text.splitlines():
