@@ -190,6 +190,8 @@ def test_unknown_tool_falls_through():
 def test_git_output_write_flags_not_whitelisted():
     assert has_write_operator("git log --output=D:/elsewhere/x.txt")
     for cmd in ("git log --output=D:/elsewhere/x.txt",
+                'git log "--output=D:/elsewhere/x.txt"',
+                "git log '--output=D:/elsewhere/x.txt'",
                 "git diff --output=ws_file.txt",
                 "git log -o D:/elsewhere/x.txt",
                 "git status && git log --output=C:/temp/x"):

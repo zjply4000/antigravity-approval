@@ -218,8 +218,7 @@ def evaluate_tool_call(tool_name: str, command: str, cwd: str, target: str,
             whitelisted = False
             break
         lowered = [t.lower() for t in tokens]
-        if (len(lowered) >= 2 and lowered[0] == "git" and lowered[1] in ("log", "diff", "show")
-                and "-o" in lowered):
+        if "-o" in lowered or any(t.startswith("--output=") for t in lowered):
             whitelisted = False
             break
     if whitelisted:
