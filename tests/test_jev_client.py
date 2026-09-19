@@ -64,6 +64,7 @@ def test_sdk_timeout_returns_none(monkeypatch):
     assert elapsed < 3.0  # hard external deadline, not the 5s sleep
 
 def test_malformed_answer_returns_none(monkeypatch):
+    FakeSDK.sleep = 0.0
     FakeSDK.install(monkeypatch)
     FakeSDK.answer = {"choice": "weird", "confidence": 0.99}
     assert evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings()) is None

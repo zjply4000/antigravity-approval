@@ -1037,6 +1037,7 @@ def test_sdk_timeout_returns_none(monkeypatch):
     assert elapsed < 3.0  # hard external deadline, not the 5s sleep
 
 def test_malformed_answer_returns_none(monkeypatch):
+    FakeSDK.sleep = 0.0
     FakeSDK.install(monkeypatch)
     FakeSDK.answer = {"choice": "weird", "confidence": 0.99}
     assert evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings()) is None
@@ -1124,9 +1125,12 @@ def evaluate_command(command: str, cwd: str, workspace_paths: list[str],
         policy = RetryPolicy(max_retries=1, backoff_max=0.2,
                              timeout=settings.eval_timeout_ms / 1000)
         try:
-            client = TypeSafeClient(model="jev-latest", retry_policy=policy)
-        except TypeError:  # ctor signature variance across SDK versions
-            client = TypeSafeClient(model="jev-latest")
+            client = TypeSafeClient(model="jev-latest", retry=policy)
+        except TypeError:
+            try:
+                client = TypeSafeClient(model="jev-latest", retry_policy=policy)
+            except TypeError:
+                client = TypeSafeClient(model="jev-latest")
         return client.system_one(
             state={"tool": "run_command", "command": command, "cwd": cwd,
                    "workspace_paths": list(workspace_paths)},
