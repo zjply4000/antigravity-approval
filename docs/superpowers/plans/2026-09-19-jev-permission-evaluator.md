@@ -154,7 +154,7 @@ def test_env_overrides_everything(tmp_path):
 
 def test_workspace_file_beats_user_file(tmp_path):
     user = tmp_path / "user.env"; user.write_text("CONFIDENCE_THRESHOLD=0.5\n")
-    ws = tmp_path / "agents"; ws.mkdir()
+    ws = tmp_path / ".agents"; ws.mkdir()
     (ws / "jev.env").write_text("CONFIDENCE_THRESHOLD=0.8\nALLOW_NETWORK_COMMANDS=true\n")
     s = load_settings(env={}, user_file=user, workspace_dir=tmp_path)
     assert s.confidence_threshold == 0.8
