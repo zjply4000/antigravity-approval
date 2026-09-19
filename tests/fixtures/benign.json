@@ -1,0 +1,7 @@
+{
+  "toolCall": {"name": "run_command", "args": {"CommandLine": "git status", "Cwd": "D:/proj"}},
+  "stepIdx": 3,
+  "conversationId": "conv-1",
+  "workspacePaths": ["D:/proj"],
+  "modelName": "gemini-3.6-flash-medium"
+}

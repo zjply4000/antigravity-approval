@@ -1,0 +1,6 @@
+{
+  "toolCall": {"name": "write_to_file", "args": {"TargetFile": "D:/proj/src/a.py", "Content": "x"}},
+  "stepIdx": 5,
+  "conversationId": "conv-1",
+  "workspacePaths": ["D:/proj"]
+}

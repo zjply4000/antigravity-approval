@@ -1,0 +1,6 @@
+{
+  "toolCall": {"name": "run_command", "args": {"CommandLine": "git status && rm -rf /", "Cwd": "D:/proj"}},
+  "stepIdx": 4,
+  "conversationId": "conv-1",
+  "workspacePaths": ["D:/proj"]
+}
