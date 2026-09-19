@@ -123,7 +123,8 @@ def test_target_inside_workspace_ok(tmp_path):
     assert check_file_target(str(tmp_path / "a.py"), str(tmp_path), [str(tmp_path)]) is None
 
 def test_target_escape_denied(tmp_path):
-    reason = check_file_target("C:/Windows/System32/x", str(tmp_path), [str(tmp_path)])
+    escape = "C:/Windows/System32/x" if sys.platform == "win32" else "/etc/escape-target"
+    reason = check_file_target(escape, str(tmp_path), [str(tmp_path)])
     assert reason is not None
 
 @pytest.mark.skipif(sys.platform != "win32", reason="NTFS junctions")
