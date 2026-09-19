@@ -146,6 +146,8 @@ antigravity-approval/
 
 **Stdout purity:** `sys.stdout` carries exactly one write — the final decision as `json.dumps(...)` (ASCII-escaped, so Windows code pages can't break encoding). At entrypoint startup, all diagnostics are forced to `sys.stderr`: `warnings.filterwarnings` mutes Python warnings, `logging` is rooted to stderr, and SDK loggers inherit that. A chatty dependency (retry logs, deprecation notices) can therefore never corrupt Antigravity's JSON parsing of stdout.
 
+**Payload reading:** GUI hosts (Electron/VS Code subprocesses) may keep the write end of the stdin pipe open after delivering the payload, so EOF-terminated reads hang forever. The entrypoint reads incrementally in a daemon thread with a **1 s read deadline** (`_READ_DEADLINE_S`): it returns as soon as the buffer parses as a complete JSON document (no strict prefix of a top-level object is valid JSON, so newline-less bursts work), returns the raw text on EOF even when unparseable (→ "malformed hook payload"), and returns `None` on deadline/empty input (→ `{"decision": "ask", "reason": "payload read timeout / empty input"}`).
+
 **Exit contract:**
 
 ```python
@@ -156,10 +158,12 @@ except Exception as e:
     sys.stdout.write(json.dumps({"decision": "ask", "reason": f"evaluator crash: {e}"}))
 finally:
     sys.stdout.flush()
-    sys.exit(0)
+# runner, after main() returns:
+sys.stdout.flush()
+os._exit(code)   # NOT sys.exit — see below
 ```
 
-The explicit flush before `sys.exit(0)` avoids buffered output being dropped when the process is spawned through GUI subprocess pipes on Windows.
+The explicit flush avoids buffered output being dropped when the process is spawned through GUI subprocess pipes on Windows. The runner then calls **`os._exit`**, not `sys.exit`: with a payload-holding host the stdin pump daemon is still blocked in a read on the stdin buffer, and normal interpreter finalization would abort with `Fatal Python error: _enter_buffered_busy` (~1 s fatal dump, exit ≠ 0). stdout is flushed and the audit record is already written (handlers flush per emit), so immediate process exit is safe.
 
 **Lazy imports:** only `jev_client` touches `typesafe_sdk`, and only inside its evaluate function. `config`, `deterministic`, `decide`, and `logging_setup` are standard-library-only, so Tier 1 paths never pay the SDK's pydantic/HTTP import cost (~100+ ms).
 
@@ -261,6 +265,7 @@ The explicit venv interpreter is mandatory: a GUI-spawned bare `python` may reso
 | Malformed Jev answer | `ask` |
 | Python interpreter fails to spawn (missing/wrong venv path) | Antigravity default flow proceeds (interactive prompt); `install_hook.py` validates interpreter + dependency at install time |
 | Third-party code writes to stdout (warnings, retry logs) | prevented structurally: stdout reserved for the single decision JSON; all diagnostics forced to stderr (§6.1) |
+| Payload never arrives (host holds stdin open) | `ask` "payload read timeout / empty input" after the 1 s read deadline (§6.1 payload reading) |
 | Any unhandled exception | top-level handler → `ask` |
 
 ## 8. Testing Plan

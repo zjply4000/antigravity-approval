@@ -4,18 +4,24 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "jev_evaluator.py"
 
-def run_hook(payload: str, extra_env: dict | None = None, importtime: bool = False):
+def _popen_env() -> dict:
     env = dict(os.environ)
     env.pop("TYPESAFE_API_KEY", None)  # keep tests network-free
-    env.update(extra_env or {})
     tmp_home = tempfile.mkdtemp()
     env["USERPROFILE"] = tmp_home   # redirect Path.home() on Windows (config + audit log)
     env["HOME"] = tmp_home          # redirect Path.home() on POSIX
+    return env
+
+def run_hook(payload: str, extra_env: dict | None = None, importtime: bool = False):
+    env = _popen_env()
+    env.update(extra_env or {})
+    tmp_home = env["HOME"]
     cmd = [sys.executable]
     if importtime:
         cmd.append("-X")
@@ -64,3 +70,42 @@ def test_stdout_purity_diagnostics_go_to_stderr():
 def test_tier1_never_imports_sdk():
     proc = run_hook(fixture("benign.json"), importtime=True)
     assert "typesafe_sdk" not in proc.stderr
+
+def _answer_with_open_stdin(payload: str) -> str:
+    """Spawn the hook, deliver the payload, and keep stdin OPEN (no EOF) —
+    mirroring the Antigravity GUI host, which never closes the pipe. Returns
+    the decision line; fails if the hook does not answer within 5 s."""
+    proc = subprocess.Popen([sys.executable, str(SCRIPT)], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, encoding="utf-8", env=_popen_env())
+    try:
+        proc.stdin.write(payload)
+        proc.stdin.flush()
+        outcome: dict = {}
+
+        def _read():
+            outcome["line"] = proc.stdout.readline()
+
+        reader = threading.Thread(target=_read, daemon=True)
+        reader.start()
+        reader.join(timeout=5.0)
+        assert "line" in outcome, "hook hung: no decision before stdin EOF"
+        return outcome["line"]
+    finally:
+        try:
+            if proc.stdin:
+                proc.stdin.close()
+        except OSError:
+            pass
+        proc.wait(timeout=10)
+        assert proc.returncode == 0, f"hook exited {proc.returncode} on held-open stdin"
+
+def test_open_stdin_newline_answers_without_eof():
+    """Antigravity sends a minified JSON line and keeps the pipe open."""
+    line = _answer_with_open_stdin(fixture("benign.json") + "\n")
+    assert json.loads(line)["decision"] == "allow"
+
+def test_open_stdin_burst_without_newline_answers():
+    """Antigravity may also send a single burst with NO trailing newline."""
+    line = _answer_with_open_stdin(fixture("benign.json"))
+    assert json.loads(line)["decision"] == "allow"
