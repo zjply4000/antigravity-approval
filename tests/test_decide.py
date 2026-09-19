@@ -45,6 +45,10 @@ def test_verdict_none_fail_modes():
     assert finalize_tier2(make_settings(), None).decision == "ask"
     assert finalize_tier2(make_settings(fail_mode="open"), None).decision == "allow"
 
+def test_tier2_cause_reaches_reason():
+    d = finalize_tier2(make_settings(), None, "missing TYPESAFE_API_KEY")
+    assert d.decision == "ask" and "missing TYPESAFE_API_KEY" in d.reason
+
 def test_decide_composes_tier1_and_tier2():
     s = make_settings()
     d1 = decide("run_command", {"CommandLine": "git status"}, ["C:/ws"], s, None)

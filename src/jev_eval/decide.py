@@ -35,12 +35,15 @@ def extract_args(tool_name: str, args: dict) -> dict:
                 "target": pick("TargetFile", "AbsolutePath", "target_file", "file_path", "filePath")}
     return {"command": "", "cwd": "", "target": ""}
 
-def finalize_tier2(settings: Settings, verdict: Verdict | None) -> Decision:
-    """Matrix rows 5, 6, 8."""
+def finalize_tier2(settings: Settings, verdict: Verdict | None,
+                   cause: str | None = None) -> Decision:
+    """Matrix rows 5, 6, 8. `cause` carries the tier-2 failure reason when verdict is None."""
     if verdict is None:
         if settings.fail_mode == "open":
-            return Decision("allow", "JEV_FAIL_MODE=open: tier-2 unavailable", "fallback")
-        return Decision("ask", "tier-2 evaluation unavailable (timeout/error/missing key)",
+            return Decision("allow",
+                            f"JEV_FAIL_MODE=open: tier-2 unavailable ({cause or 'unknown cause'})",
+                            "fallback")
+        return Decision("ask", cause or "tier-2 evaluation unavailable (timeout/error/missing key)",
                         "fallback")
     approvable = (verdict.category in ("read_only", "standard_dev")
                   or (verdict.category == "network_outbound" and settings.allow_network_commands))
@@ -52,12 +55,13 @@ def finalize_tier2(settings: Settings, verdict: Verdict | None) -> Decision:
                     verdict.category, verdict.confidence, verdict.latency_ms)
 
 def decide(tool_name: str, raw_args: dict, workspace_paths: list[str], settings: Settings,
-           verdict: Verdict | None) -> Decision:
+           verdict: Verdict | None, cause: str | None = None) -> Decision:
+    """Pure pipeline: Tier 1 then Tier 2. `cause` is the tier-2 failure reason (verdict None)."""
     ex = extract_args(tool_name, raw_args)
     t1 = evaluate_tool_call(tool_name, ex["command"], ex["cwd"], ex["target"],
                             workspace_paths, settings.allow_network_commands)
     if t1 is not None:
         return Decision(t1.decision, t1.reason, t1.tier)
     if tool_name == "run_command":
-        return finalize_tier2(settings, verdict)
+        return finalize_tier2(settings, verdict, cause)
     return Decision("ask", f"unhandled tool {tool_name!r}", "fallback")

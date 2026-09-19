@@ -65,7 +65,8 @@ def has_write_operator(segment: str) -> bool:
     """Unquoted file redirection or write cmdlet. FD redirections (2>&1) don't count."""
     masked = _mask_quoted(segment, "\"'")
     masked = _FD_REDIRECT_RE.sub("", masked)
-    return ">" in masked or bool(_WRITE_CMDLET_RE.search(masked))
+    return ">" in masked or bool(_WRITE_CMDLET_RE.search(masked)) or bool(
+        re.search(r"(?:^|\s)--output=", masked))
 
 _SUBST_RE = re.compile(r"`|\$\(|<\(")
 
@@ -214,6 +215,11 @@ def evaluate_tool_call(tool_name: str, command: str, cwd: str, target: str,
     for seg, is_subst in zip(segments, subst):
         tokens = tokenize(seg)
         if tokens is None or is_subst or has_write_operator(seg) or not is_whitelisted(tokens):
+            whitelisted = False
+            break
+        lowered = [t.lower() for t in tokens]
+        if (len(lowered) >= 2 and lowered[0] == "git" and lowered[1] in ("log", "diff", "show")
+                and "-o" in lowered):
             whitelisted = False
             break
     if whitelisted:

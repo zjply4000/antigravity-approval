@@ -55,8 +55,8 @@ def main() -> int:
         if t1 is not None:
             decision = Decision(t1.decision, t1.reason, t1.tier)
         elif tool_name == "run_command":
-            verdict = evaluate_command(ex["command"], ex["cwd"], workspace_paths, settings)
-            decision = finalize_tier2(settings, verdict)
+            verdict, cause = evaluate_command(ex["command"], ex["cwd"], workspace_paths, settings)
+            decision = finalize_tier2(settings, verdict, cause)
         else:
             decision = Decision("ask", f"unhandled tool {tool_name!r}", "fallback")
         audit(logger, conversationId=conversation_id, tool=tool_name,

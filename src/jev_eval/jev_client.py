@@ -52,14 +52,18 @@ def _run_with_deadline(fn, deadline_s: float):
     return box.get("result"), None
 
 def evaluate_command(command: str, cwd: str, workspace_paths: list[str],
-                     settings: Settings) -> Verdict | None:
+                     settings: Settings) -> tuple[Verdict | None, str | None]:
+    """Returns (verdict, cause). On success: (Verdict, None). On failure: (None, cause)
+    where cause names the specific failure (missing key, import failure, deadline,
+    API error with HTTP status, malformed answer) for the audit log."""
     if not settings.api_key:
-        return None
+        return None, "missing TYPESAFE_API_KEY"
     export_sdk_environ(settings)
     try:
-        from typesafe_sdk import TypeSafeClient, Choice, RetryPolicy  # lazy by design
+        from typesafe_sdk import (TypeSafeClient, Choice, RetryPolicy,  # lazy by design
+                                  TypeSafeAPIError)
     except Exception:
-        return None
+        return None, "typesafe-sdk not importable"
     started = time.perf_counter()
 
     def _call():
@@ -80,17 +84,21 @@ def evaluate_command(command: str, cwd: str, workspace_paths: list[str],
 
     try:
         result, why = _run_with_deadline(_call, settings.eval_timeout_ms / 1000 + 0.5)
+    except TypeSafeAPIError as exc:
+        return None, f"Jev API error {getattr(exc, 'status', '') or 'unknown status'}".strip()
     except Exception:
-        return None
+        return None, "Jev call failed"
     if why == "deadline" or result is None:
-        return None
+        return None, "Jev evaluation deadline exceeded"
     latency_ms = int((time.perf_counter() - started) * 1000)
     try:
         answer = result.choices["category"]
         category = answer.choice
         confidence = float(answer.confidence)
     except (AttributeError, KeyError, TypeError, ValueError):
-        return None
-    if category not in _CRITERIA or not 0.0 <= confidence <= 1.0:
-        return None
-    return Verdict(category=category, confidence=confidence, latency_ms=latency_ms)
+        return None, "malformed Jev confidence"
+    if category not in _CRITERIA:
+        return None, f"unknown Jev category: {category!r}"
+    if not 0.0 <= confidence <= 1.0:
+        return None, f"Jev confidence out of range: {confidence}"
+    return Verdict(category=category, confidence=confidence, latency_ms=latency_ms), None

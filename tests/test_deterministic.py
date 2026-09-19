@@ -186,3 +186,15 @@ def test_empty_command_asks():
 
 def test_unknown_tool_falls_through():
     assert evaluate_tool_call("manage_task", "", "", "", [], allow_network=False) is None
+
+def test_git_output_write_flags_not_whitelisted():
+    assert has_write_operator("git log --output=D:/elsewhere/x.txt")
+    for cmd in ("git log --output=D:/elsewhere/x.txt",
+                "git diff --output=ws_file.txt",
+                "git log -o D:/elsewhere/x.txt",
+                "git status && git log --output=C:/temp/x"):
+        out = evaluate_tool_call("run_command", cmd, "C:/ws", "", ["C:/ws"], allow_network=False)
+        assert out is None, f"{cmd!r} must fall to Tier 2, got {out!r}"
+    out = evaluate_tool_call("run_command", "git log --output-indicator-new=X", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "allow"

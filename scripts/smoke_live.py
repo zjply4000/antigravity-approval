@@ -19,9 +19,9 @@ def main() -> int:
         print("TYPESAFE_API_KEY is not configured (env or ~/.gemini/config/jev.env).",
               file=sys.stderr)
         return 1
-    verdict = evaluate_command("npm test", cwd, [cwd], settings)
+    verdict, cause = evaluate_command("npm test", cwd, [cwd], settings)
     if verdict is None:
-        print("Tier-2 evaluation returned None (timeout/error/missing key) — "
+        print(f"Tier-2 evaluation returned None ({cause or 'unknown cause'}) — "
               "hook would escalate to 'ask'.", file=sys.stderr)
         return 1
     print(f"category={verdict.category} confidence={verdict.confidence:.3f} "

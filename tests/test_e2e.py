@@ -22,7 +22,7 @@ def run_hook(payload: str, extra_env: dict | None = None, importtime: bool = Fal
         cmd.append("importtime")
     cmd.append(str(SCRIPT))
     return subprocess.run(cmd, input=payload, capture_output=True, text=True,
-                          encoding="utf-8", env=env, timeout=60)
+                          encoding="utf-8", env=env, cwd=tmp_home, timeout=60)
 
 def fixture(name: str) -> str:
     return (ROOT / "tests" / "fixtures" / name).read_text(encoding="utf-8")

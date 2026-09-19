@@ -39,38 +39,49 @@ class FakeSDK:
                 self.criteria = criteria
         mod.Choice = Choice
         mod.RetryPolicy = lambda **kw: SimpleNamespace(**kw)
+        mod.TypeSafeAPIError = type("TypeSafeAPIError", (Exception,), {})
         monkeypatch.setitem(sys.modules, "typesafe_sdk", mod)
 
 def test_happy_path(monkeypatch):
     FakeSDK.install(monkeypatch)
     FakeSDK.sleep = 0.0
-    v = evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings())
+    v, cause = evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings())
     assert v == Verdict("standard_dev", 0.982, v.latency_ms)
     assert v.latency_ms >= 0
+    assert cause is None
     assert FakeSDK.calls[0]["command"] == "npm test"
 
 def test_missing_key_short_circuits(monkeypatch):
     FakeSDK.calls = []
-    assert evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings(api_key=None)) is None
+    v, cause = evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings(api_key=None))
+    assert v is None
+    assert "missing TYPESAFE_API_KEY" in cause
     assert FakeSDK.calls == []
 
 def test_sdk_timeout_returns_none(monkeypatch):
     FakeSDK.install(monkeypatch)
     FakeSDK.sleep = 5.0
     start = time.perf_counter()
-    v = evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings(eval_timeout_ms=200))
+    v, cause = evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings(eval_timeout_ms=200))
     elapsed = time.perf_counter() - start
     assert v is None
+    assert "deadline exceeded" in cause
     assert elapsed < 3.0  # hard external deadline, not the 5s sleep
 
 def test_malformed_answer_returns_none(monkeypatch):
     FakeSDK.sleep = 0.0
     FakeSDK.install(monkeypatch)
     FakeSDK.answer = {"choice": "weird", "confidence": 0.99}
-    assert evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings()) is None
+    v, cause = evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings())
+    assert v is None
+    assert "unknown Jev category" in cause
     FakeSDK.answer = {"choice": "standard_dev"}  # confidence missing -> AttributeError -> None
-    assert evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings()) is None
+    v, cause = evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings())
+    assert v is None
+    assert "malformed Jev confidence" in cause
 
 def test_import_failure_returns_none(monkeypatch):
     monkeypatch.setitem(sys.modules, "typesafe_sdk", None)  # import raises ImportError
-    assert evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings()) is None
+    v, cause = evaluate_command("npm test", "C:/ws", ["C:/ws"], make_settings())
+    assert v is None
+    assert "not importable" in cause
