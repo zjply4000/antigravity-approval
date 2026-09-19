@@ -1248,7 +1248,7 @@ def test_unknown_tool_asks():
     assert d.decision == "ask" and d.tier == "fallback"
 
 def test_decision_defaults():
-    d = Decision("ask", "why")
+    d = Decision("ask", "why", "fallback")
     assert d.category is None and d.confidence is None and d.latency_ms is None
 ```
 
