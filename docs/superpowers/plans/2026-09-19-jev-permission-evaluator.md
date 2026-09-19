@@ -434,7 +434,7 @@ def test_tokenize_strips_one_quote_layer():
     assert tokenize("del C:\\tools\\build /s") == ["del", "C:\\tools\\build", "/s"]
 
 def test_tokenize_unbalanced_quotes_returns_none():
-    assert tokenize("echo it's fine") is None
+    assert tokenize("echo 'unclosed") is None
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
