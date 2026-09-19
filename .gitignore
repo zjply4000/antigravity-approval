@@ -1,0 +1,6 @@
+.venv/
+.agents/hooks.json
+.agents/jev.env
+__pycache__/
+*.egg-info/
+.pytest_cache/
