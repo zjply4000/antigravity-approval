@@ -1,0 +1,17 @@
+{
+  "jev-evaluator": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command|write_to_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"{{EVALUATOR_DIR}}/.venv/Scripts/python.exe\" \"{{EVALUATOR_DIR}}/scripts/jev_evaluator.py\" --event PreToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
