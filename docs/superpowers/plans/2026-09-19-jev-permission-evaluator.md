@@ -1586,7 +1586,7 @@ git commit -m "test: end-to-end hook subprocess coverage incl. stdout purity and
 
 **Interfaces:**
 - Consumes: nothing from the package (standalone script).
-- Produces: `render(root: Path) -> str` (template with `{{EVALUATOR_DIR}}` replaced, POSIX-style absolute path); CLI `install_hook.py` writes `.agents/hooks.json` after validating the venv interpreter and `typesafe-sdk` importability, then prints the global-config block.
+- Produces: `render(root: Path) -> str` (template with `{{EVALUATOR_DIR}}` and `{{VENV_PYTHON}}` replaced, POSIX-style absolute paths); CLI `install_hook.py` writes `.agents/hooks.json` after validating the venv interpreter and `typesafe-sdk` importability, then prints the global-config block.
 
 - [ ] **Step 1: Create the template**
 
@@ -1601,7 +1601,7 @@ git commit -m "test: end-to-end hook subprocess coverage incl. stdout purity and
         "hooks": [
           {
             "type": "command",
-            "command": "\"{{EVALUATOR_DIR}}/.venv/Scripts/python.exe\" \"{{EVALUATOR_DIR}}/scripts/jev_evaluator.py\" --event PreToolUse",
+            "command": "\"{{VENV_PYTHON}}\" \"{{EVALUATOR_DIR}}/scripts/jev_evaluator.py\" --event PreToolUse",
             "timeout": 10
           }
         ]
@@ -1616,6 +1616,7 @@ git commit -m "test: end-to-end hook subprocess coverage incl. stdout purity and
 ```python
 # tests/test_install_hook.py
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -1626,10 +1627,13 @@ def test_render_produces_valid_json_with_absolute_path():
     root = Path(__file__).resolve().parents[1]
     rendered = render(root)
     data = json.loads(rendered)
-    hook = data["jev-evaluator"]["PreToolUse"][0]["hooks"][0]
-    assert "multi_replace_file_content" in hook["matcher"]
+    rule = data["jev-evaluator"]["PreToolUse"][0]
+    hook = rule["hooks"][0]
+    assert "multi_replace_file_content" in rule["matcher"]
     cmd = hook["command"]
-    assert str(root.as_posix() + "/.venv/Scripts/python.exe") in cmd
+    venv_rel = ".venv/Scripts/python.exe" if os.name == "nt" else ".venv/bin/python"
+    assert str(root.as_posix() + "/" + venv_rel) in cmd
+    assert "{{VENV_PYTHON}}" not in rendered
     assert "{{EVALUATOR_DIR}}" not in rendered
 ```
 
@@ -1655,7 +1659,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def render(root: Path) -> str:
     template = (root / "hooks.template.json").read_text(encoding="utf-8")
-    return template.replace("{{EVALUATOR_DIR}}", root.as_posix())
+    venv_py = venv_python(root).as_posix()
+    return template.replace("{{VENV_PYTHON}}", venv_py).replace("{{EVALUATOR_DIR}}", root.as_posix())
 
 def venv_python(root: Path) -> Path:
     return root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
