@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"{{VENV_PYTHON}}\" \"{{EVALUATOR_DIR}}/scripts/jev_evaluator.py\" --event PreToolUse",
+            "command": "{{VENV_PYTHON}} {{EVALUATOR_SCRIPT}} --event PreToolUse",
             "timeout": 10
           }
         ]

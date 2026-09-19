@@ -10,10 +10,35 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+def _cmd_safe(path: str) -> str:
+    """Make a path safe for Antigravity's cmd.exe hook spawn.
+
+    Antigravity re-quotes hook commands through cmd.exe (Go's EscapeArg turns
+    inner quotes into \\\"), so ANY quoted token fails with "not recognized as
+    an internal or external command". Paths without spaces need no quotes;
+    paths with spaces are converted to their 8.3 short form when available.
+    """
+    if " " not in path:
+        return path
+    if os.name != "nt":
+        raise SystemExit(f"ERROR: path contains spaces, which breaks Antigravity's "
+                         f"cmd.exe hook spawn: {path}\n"
+                         "Install to a space-free location.")
+    import ctypes
+    buf = ctypes.create_unicode_buffer(1024)
+    if ctypes.windll.kernel32.GetShortPathNameW(path, buf, 1024):
+        return buf.value.replace("\\", "/")
+    raise SystemExit(f"ERROR: path contains spaces and no 8.3 short name is available: {path}\n"
+                     "Antigravity's cmd.exe hook spawn mangles quoted paths; "
+                     "reinstall to a space-free location.")
+
 def render(root: Path) -> str:
     template = (root / "hooks.template.json").read_text(encoding="utf-8")
-    venv_py = venv_python(root).as_posix()
-    return template.replace("{{VENV_PYTHON}}", venv_py).replace("{{EVALUATOR_DIR}}", root.as_posix())
+    venv_py = _cmd_safe(venv_python(root).as_posix())
+    script = _cmd_safe((root / "scripts" / "jev_evaluator.py").as_posix())
+    return (template
+            .replace("{{VENV_PYTHON}}", venv_py)
+            .replace("{{EVALUATOR_SCRIPT}}", script))
 
 def venv_python(root: Path) -> Path:
     return root / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")

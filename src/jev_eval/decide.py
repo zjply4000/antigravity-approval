@@ -24,7 +24,13 @@ def extract_args(tool_name: str, args: dict) -> dict:
         for key in keys:
             value = args.get(key)
             if value:
-                return str(value)
+                # Antigravity's planner wraps arg values in literal quotes
+                # (observed: CommandLine='"git status; git log -n 5"'); one
+                # wrapping layer is stripped so tokenization sees the command.
+                text = str(value).strip()
+                if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+                    text = text[1:-1].strip()
+                return text
         return ""
 
     if tool_name == "run_command":

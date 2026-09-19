@@ -70,3 +70,16 @@ def test_unknown_tool_asks():
 def test_decision_defaults():
     d = Decision("ask", "why", "fallback")
     assert d.category is None and d.confidence is None and d.latency_ms is None
+
+def test_extract_args_strips_model_quote_wrapping():
+    """Antigravity's planner emits arg values wrapped in literal quotes."""
+    ex = extract_args("run_command", {"CommandLine": '"git status; git log -n 5"',
+                                      "Cwd": '"d:/Projects/Jev/antigravity-approval"'})
+    assert ex["command"] == "git status; git log -n 5"
+    assert ex["cwd"] == "d:/Projects/Jev/antigravity-approval"
+
+def test_real_antigravity_quoted_payload_whitelists():
+    d = decide("run_command", {"CommandLine": '"git status; git log -n 5"',
+                               "Cwd": '"d:/Projects/Jev/antigravity-approval"'},
+               ["d:/Projects/Jev/antigravity-approval"], make_settings(), None)
+    assert d.decision == "allow" and d.tier == "whitelist"

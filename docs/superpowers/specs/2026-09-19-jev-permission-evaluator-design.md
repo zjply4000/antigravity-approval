@@ -240,7 +240,7 @@ Hook config embeds machine-specific absolute paths, so it is **generated, not co
         "hooks": [
           {
             "type": "command",
-            "command": "\"{{EVALUATOR_DIR}}/.venv/Scripts/python.exe\" \"{{EVALUATOR_DIR}}/scripts/jev_evaluator.py\" --event PreToolUse",
+            "command": "{{VENV_PYTHON}} {{EVALUATOR_SCRIPT}} --event PreToolUse",
             "timeout": 10
           }
         ]
@@ -250,7 +250,9 @@ Hook config embeds machine-specific absolute paths, so it is **generated, not co
 }
 ```
 
-The explicit venv interpreter is mandatory: a GUI-spawned bare `python` may resolve to the wrong system interpreter without `typesafe-sdk` installed. The matcher includes `multi_replace_file_content` so batched edits still pass the path guard — ungoverned, they would bypass the deny-on-escape check entirely and fall to the unmanaged default prompt. `--event` argv flag because the payload omits the event name; `timeout: 10` seconds is the backstop. If the interpreter itself fails to spawn, Antigravity proceeds with its default interactive prompt — fail-closed by construction; `install_hook.py` validates the interpreter and dependency at install time.
+**cmd-safe rendering (verified against Antigravity 2.0 on Windows):** Antigravity's Go backend spawns hook commands through `cmd.exe`, re-quoting the whole string with Go's `EscapeArg` — inner quotes become `\"`, and cmd then tries to execute a program literally named `\"D:/...python.exe\"` ("is not recognized as an internal or external command"; observed in the conversation transcript as `jsonhook__jev-evaluator_PreToolUse_0_0 failed: command failed: exit status 1`). The rendered command therefore contains **no quoted tokens**: paths are substituted unquoted, and any path containing a space is converted to its 8.3 short form (`GetShortPathNameW`) or the installer fails with guidance.
+
+The explicit venv interpreter is mandatory: a GUI-spawned bare `python` may resolve to the wrong system interpreter without `typesafe-sdk` installed. The matcher includes `multi_replace_file_content` so batched edits still pass the path guard — ungoverned, they would bypass the deny-on-escape check entirely and fall to the unmanaged default prompt. `--event` argv flag because the payload omits the event name; `timeout: 10` seconds is the backstop. If the interpreter itself fails to spawn, Antigravity proceeds with its default interactive prompt — fail-closed by construction; `install_hook.py` validates the interpreter and dependency at install time. Antigravity's planner additionally wraps `toolCall.args` values in literal quotes (observed: `CommandLine='"git status; git log -n 5"'`); extraction strips that wrapping layer (§6.5).
 
 ## 7. Error Handling Summary
 
