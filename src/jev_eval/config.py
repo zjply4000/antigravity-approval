@@ -81,3 +81,9 @@ def export_sdk_environ(settings: Settings) -> None:
     """Publish SDK settings as process env BEFORE typesafe_sdk is imported."""
     os.environ["TYPESAFE_API_KEY"] = settings.api_key or ""
     os.environ["TYPESAFE_BASE_URL"] = settings.base_url
+
+def resolve_workspace_dir(cwd: str) -> str:
+    """Antigravity spawns hooks with CWD = <workspace>/.agents; the workspace
+    root — where .agents/jev.env lives — is that directory's parent."""
+    base = os.path.basename(cwd.rstrip("\/"))
+    return os.path.dirname(cwd.rstrip("\/")) if base == ".agents" else cwd

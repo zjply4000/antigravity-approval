@@ -40,3 +40,8 @@ def test_non_utf8_env_file_falls_back_to_defaults(tmp_path):
     user.write_bytes("CONFIDENCE_THRESHOLD=0.7\n".encode("utf-16"))
     s = load_settings(env={}, user_file=user, workspace_dir=None)
     assert s.confidence_threshold == 0.96  # unreadable file treated as absent
+
+def test_resolve_workspace_dir_handles_agents_cwd():
+    from jev_eval.config import resolve_workspace_dir
+    assert resolve_workspace_dir("d:/Projects/ws/.agents") == "d:/Projects/ws"
+    assert resolve_workspace_dir("d:/Projects/ws") == "d:/Projects/ws"
