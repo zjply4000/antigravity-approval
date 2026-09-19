@@ -76,3 +76,35 @@ def test_blocklist_no_false_deny_on_prose():
 
 def test_blocklist_raw_scan_for_substitutions():
     assert blocklist_hit('git log "$(rm -rf /)"') is not None
+
+from jev_eval.deterministic import is_network_command, is_whitelisted
+
+def test_network_first_tokens():
+    assert is_network_command("curl http://x", ["curl", "http://x"])
+    assert is_network_command("ssh host", ["ssh", "host"])
+    assert is_network_command("Invoke-WebRequest http://x", ["invoke-webrequest", "http://x"])
+
+def test_network_package_managers():
+    assert is_network_command("npm install left-pad", ["npm", "install", "left-pad"])
+    assert is_network_command("pip install requests", ["pip", "install", "requests"])
+    assert is_network_command("cargo add serde", ["cargo", "add", "serde"])
+    assert is_network_command("npm publish", ["npm", "publish"])
+
+def test_not_network():
+    assert not is_network_command("git status", ["git", "status"])
+    assert not is_network_command("npm test", ["npm", "test"])
+    assert not is_network_command("cargo build", ["cargo", "build"])
+
+def test_whitelist_matches():
+    assert is_whitelisted(["git", "status"])
+    assert is_whitelisted(["git", "status", "--long"])
+    assert is_whitelisted(["ls", "-la"])
+    assert is_whitelisted(["python", "--version"])
+    assert is_whitelisted(["select-string", "-pattern", "x"])
+    assert is_whitelisted(["out-host"])
+
+def test_whitelist_rejects():
+    assert not is_whitelisted([])
+    assert not is_whitelisted(["git", "push"])
+    assert not is_whitelisted(["rm", "-rf", "/"])
+    assert not is_whitelisted(["npm", "run", "deploy"])

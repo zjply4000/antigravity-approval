@@ -112,3 +112,34 @@ def blocklist_hit(segment: str) -> str | None:
             if pattern.search(segment):
                 return label
     return None
+
+_NETWORK_FIRST = frozenset({
+    "curl", "wget", "ssh", "scp", "sftp", "nc", "ncat", "telnet", "ftp",
+    "invoke-webrequest", "iwr", "invoke-restmethod", "irm",
+})
+_PKG_INSTALL_RE = re.compile(
+    r"^(?:npm|pnpm|yarn|bun|pip|pip3|uv|poetry|cargo|dotnet|gem|composer)\s+"
+    r"(?:install|i|add|publish)\b", re.IGNORECASE)
+
+def is_network_command(segment: str, tokens: list[str] | None) -> bool:
+    if tokens:
+        first = tokens[0].lower()
+    else:
+        parts = segment.split()
+        first = parts[0].lower() if parts else ""
+    return first in _NETWORK_FIRST or bool(_PKG_INSTALL_RE.match(segment.strip()))
+
+_WHITELIST_PREFIXES: tuple[tuple[str, ...], ...] = (
+    ("git", "status"), ("git", "diff"), ("git", "log"), ("git", "show"), ("git", "branch"),
+    ("git", "--version"),
+    ("ls",), ("dir",), ("pwd",), ("echo",), ("cat",), ("type",), ("get-content",),
+    ("select-string",), ("grep",), ("findstr",), ("head",), ("tail",), ("more",), ("out-host",),
+    ("python", "--version"), ("python3", "--version"),
+    ("node", "--version"), ("npm", "--version"),
+)
+
+def is_whitelisted(tokens: list[str]) -> bool:
+    if not tokens:
+        return False
+    lowered = [t.lower() for t in tokens]
+    return any(lowered[:len(prefix)] == list(prefix) for prefix in _WHITELIST_PREFIXES)
