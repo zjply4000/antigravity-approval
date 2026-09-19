@@ -200,3 +200,19 @@ def test_git_output_write_flags_not_whitelisted():
     out = evaluate_tool_call("run_command", "git log --output-indicator-new=X", "C:/ws", "",
                              ["C:/ws"], allow_network=False)
     assert out is not None and out.decision == "allow"
+
+def test_blocklist_sees_through_shell_invocation_quoting():
+    """cmd /c "…"-wrapped destructive commands must deny, matching their
+    unwrapped forms — the quoted content of a shell invocation is the
+    command itself, not prose."""
+    assert blocklist_hit('cmd /c "if exist build rmdir /s /q build"') == "cmd.exe recursive delete"
+    assert blocklist_hit('cmd /c "del /s build"') is not None
+    assert blocklist_hit('cmd /c "rm -rf /"') is not None
+    assert blocklist_hit('powershell -Command "Remove-Item -Recurse -Force C:/x"') is not None
+    assert blocklist_hit('cmd /c "echo hello"') is None          # benign stays Tier 2
+    # Nested-quote prose inside a shell wrapper is NOT protected (naive quote
+    # pairing) -- fail-closed direction; documented deferred masker limitation.
+    assert blocklist_hit('cmd /c "git commit -m \"rm -rf prose\""') is not None
+    out = evaluate_tool_call("run_command", 'cmd /c "if exist build rmdir /s /q build"',
+                             "C:/ws", "", ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "deny" and out.tier == "blocklist"

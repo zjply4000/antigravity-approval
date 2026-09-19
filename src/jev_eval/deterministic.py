@@ -97,20 +97,51 @@ _BLOCKLIST_TESTS: list[tuple[re.Pattern[str], str]] = [
      "remote code execution pattern"),
 ]
 
+_SHELL_INNER_RES = [
+    # cmd /c "inner" (optionally cmd.exe, with other switches before /c)
+    re.compile(r"^\s*cmd(?:\.exe)?\s+(?:/[a-z]\s+)*?/c\s+\"(.*)\"\s*$", re.IGNORECASE),
+    # powershell / pwsh -Command "inner"
+    re.compile(r"^\s*powershell(?:\.exe)?\s+(?:-[a-z]+\s+)*?-c(?:ommand)?\s+\"(.*)\"\s*$",
+               re.IGNORECASE),
+    re.compile(r"^\s*pwsh(?:\.exe)?\s+(?:-[a-z]+\s+)*?-c(?:ommand)?\s+\"(.*)\"\s*$", re.IGNORECASE),
+]
+
+def _shell_inner(segment: str) -> str | None:
+    """Inner command text for `cmd /c "…"`, `powershell -Command "…"` wrappers.
+
+    In a shell-invocation segment the quoted content IS the command, not
+    prose — quote-masking must not hide it from the blocklist.
+    """
+    for rx in _SHELL_INNER_RES:
+        m = rx.match(segment)
+        if m:
+            return m.group(1)
+    return None
+
+def _blocklist_scan_texts(segment: str) -> list[str]:
+    scans = [_mask_quoted(segment, "\"'")]
+    if has_substitution(segment):
+        scans.append(segment)  # raw: masking would hide $(rm
+    inner = _shell_inner(segment)
+    if inner is not None:
+        scans.append(_mask_quoted(inner, "\"'"))
+        if has_substitution(inner):
+            scans.append(inner)
+    return scans
+
 def blocklist_hit(segment: str) -> str | None:
     """Reason label if the segment matches the blocklist, else None.
 
     Scans quote-masked text (protects quoted prose). Substitution-bearing
     segments are additionally scanned raw — the tokenizer glues `$(rm` into
-    one token that masking would otherwise hide (spec §6.3).
+    one token that masking would otherwise hide (spec §6.3). Shell-invocation
+    wrappers (`cmd /c "…"`, `powershell -Command "…"`) are additionally
+    scanned at their inner command, whose quoted content is the command
+    itself, not prose.
     """
-    scanned = _mask_quoted(segment, "\"'")
-    for pattern, label in _BLOCKLIST_TESTS:
-        if pattern.search(scanned):
-            return label
-    if has_substitution(segment):
+    for scanned in _blocklist_scan_texts(segment):
         for pattern, label in _BLOCKLIST_TESTS:
-            if pattern.search(segment):
+            if pattern.search(scanned):
                 return label
     return None
 
@@ -203,14 +234,10 @@ def evaluate_tool_call(tool_name: str, command: str, cwd: str, target: str,
     if not segments:
         return Tier1Outcome("ask", "empty or unparsable command", "fallback")
     subst = [has_substitution(seg) for seg in segments]
-    for seg, is_subst in zip(segments, subst):
-        scans = [_mask_quoted(seg, "\"'")]
-        if is_subst:
-            scans.append(seg)  # raw text: masking would hide $(rm
-        for scanned in scans:
-            hit = next((label for pattern, label in _BLOCKLIST_TESTS if pattern.search(scanned)), None)
-            if hit:
-                return Tier1Outcome("deny", f"blocklist: {hit}", "blocklist")
+    for seg in segments:
+        hit = blocklist_hit(seg)
+        if hit:
+            return Tier1Outcome("deny", f"blocklist: {hit}", "blocklist")
     whitelisted = True
     for seg, is_subst in zip(segments, subst):
         tokens = tokenize(seg)
