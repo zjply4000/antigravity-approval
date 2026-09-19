@@ -76,6 +76,8 @@ def has_substitution(segment: str) -> bool:
 _BLOCKLIST_TESTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\brm\b[^;|&]*-\w*r\w*f", re.IGNORECASE), "rm recursive force"),
     (re.compile(r"\brm\b[^;|&]*-\w*f\w*r", re.IGNORECASE), "rm force recursive"),
+    (re.compile(r"\brm\b(?=[^;|&]*\s-\w*r\b)(?=[^;|&]*\s-\w*f\b)", re.IGNORECASE),
+     "rm separated recursive force"),
     (re.compile(r"\brm\b[^;|&]*--recursive\b", re.IGNORECASE), "rm --recursive"),
     (re.compile(r"\bmkfs", re.IGNORECASE), "mkfs"),
     (re.compile(r"\bdd\b\s+if=", re.IGNORECASE), "dd raw write"),
