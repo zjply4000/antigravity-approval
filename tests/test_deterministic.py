@@ -25,3 +25,7 @@ def test_tokenize_strips_one_quote_layer():
 
 def test_tokenize_unbalanced_quotes_returns_none():
     assert tokenize("echo 'unclosed") is None
+
+def test_split_length_preserving_fd_redirects():
+    assert split_chain("cmd >&2 ; echo done") == ["cmd >&2", "echo done"]
+    assert split_chain("a >& b | c") == ["a >& b", "c"]

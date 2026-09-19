@@ -28,7 +28,7 @@ _CHAIN_SPLIT_RE = re.compile(r"&&|\|\||\r?\n|[;|&]")
 
 def _mask_for_split(text: str) -> str:
     masked = _mask_quoted(text, "\"'")
-    masked = _FD_REDIRECT_RE.sub(_MASK * 4, masked)
+    masked = _FD_REDIRECT_RE.sub(lambda m: _MASK * len(m.group()), masked)
     masked = _TIE_RE.sub(_MASK * 2, masked)
     return masked
 

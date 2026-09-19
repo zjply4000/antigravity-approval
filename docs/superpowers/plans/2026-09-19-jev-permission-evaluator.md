@@ -435,6 +435,10 @@ def test_tokenize_strips_one_quote_layer():
 
 def test_tokenize_unbalanced_quotes_returns_none():
     assert tokenize("echo 'unclosed") is None
+
+def test_split_length_preserving_fd_redirects():
+    assert split_chain("cmd >&2 ; echo done") == ["cmd >&2", "echo done"]
+    assert split_chain("a >& b | c") == ["a >& b", "c"]
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -475,7 +479,7 @@ _CHAIN_SPLIT_RE = re.compile(r"&&|\|\||\r?\n|[;|&]")
 
 def _mask_for_split(text: str) -> str:
     masked = _mask_quoted(text, "\"'")
-    masked = _FD_REDIRECT_RE.sub(_MASK * 4, masked)
+    masked = _FD_REDIRECT_RE.sub(lambda m: _MASK * len(m.group()), masked)
     masked = _TIE_RE.sub(_MASK * 2, masked)
     return masked
 
