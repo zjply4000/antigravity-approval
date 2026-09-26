@@ -11,13 +11,13 @@ from pathlib import Path
 _LOGGER_NAME = "jev_eval.audit"
 
 def build_audit_logger(log_file: Path) -> logging.Logger:
+    log_file = Path(log_file).expanduser()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger(_LOGGER_NAME)
     logger.setLevel(logging.INFO)
     logger.propagate = False
     if logger.handlers:
         return logger
-    log_file = Path(log_file).expanduser()
-    log_file.parent.mkdir(parents=True, exist_ok=True)
     handler = logging.handlers.RotatingFileHandler(
         log_file, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(message)s"))

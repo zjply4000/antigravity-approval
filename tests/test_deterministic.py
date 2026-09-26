@@ -180,6 +180,49 @@ def test_file_tool_asks_after_path_guard():
                              ["C:/ws"], allow_network=False)
     assert out is not None and out.decision == "ask" and out.tier == "write_policy"
 
+def test_artifact_dir_outside_workspace_denied_without_extra_root(tmp_path):
+    artifact = tmp_path / "brain" / "conv1"
+    artifact.mkdir(parents=True)
+    out = evaluate_tool_call("write_to_file", "", "C:/ws", str(artifact / "plan.md"),
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "deny" and out.tier == "path_guard"
+
+def test_artifact_dir_auto_approved_as_extra_write_root(tmp_path):
+    artifact = tmp_path / "brain" / "conv1"
+    artifact.mkdir(parents=True)
+    out = evaluate_tool_call("write_to_file", "", "C:/ws", str(artifact / "plan.md"),
+                             ["C:/ws"], allow_network=False,
+                             extra_write_roots=[str(artifact)])
+    assert out is not None and out.decision == "allow" and out.tier == "artifact"
+
+def test_artifact_system_generated_not_auto_approved(tmp_path):
+    artifact = tmp_path / "brain" / "conv1"
+    (artifact / ".system_generated" / "logs").mkdir(parents=True)
+    out = evaluate_tool_call("write_to_file", "", "C:/ws",
+                             str(artifact / ".system_generated" / "logs" / "transcript.jsonl"),
+                             ["C:/ws"], allow_network=False,
+                             extra_write_roots=[str(artifact)])
+    assert out is not None and out.decision == "ask" and out.tier == "write_policy"
+
+def test_artifact_metadata_json_not_auto_approved(tmp_path):
+    artifact = tmp_path / "brain" / "conv1"
+    artifact.mkdir(parents=True)
+    out = evaluate_tool_call("write_to_file", "", "C:/ws",
+                             str(artifact / "plan.md.metadata.json"),
+                             ["C:/ws"], allow_network=False,
+                             extra_write_roots=[str(artifact)])
+    assert out is not None and out.decision == "ask" and out.tier == "write_policy"
+
+def test_extra_write_root_does_not_open_other_paths(tmp_path):
+    artifact = tmp_path / "brain" / "conv1"
+    artifact.mkdir(parents=True)
+    other = tmp_path / "brain" / "conv2"
+    other.mkdir(parents=True)
+    out = evaluate_tool_call("write_to_file", "", "C:/ws", str(other / "plan.md"),
+                             ["C:/ws"], allow_network=False,
+                             extra_write_roots=[str(artifact)])
+    assert out is not None and out.decision == "deny" and out.tier == "path_guard"
+
 def test_empty_command_asks():
     out = evaluate_tool_call("run_command", "", "C:/ws", "", ["C:/ws"], allow_network=False)
     assert out is not None and out.decision == "ask" and out.tier == "fallback"

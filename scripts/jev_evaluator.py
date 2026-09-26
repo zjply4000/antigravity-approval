@@ -46,6 +46,7 @@ from jev_eval.decide import Decision, extract_args, finalize_tier2  # noqa: E402
 from jev_eval.deterministic import evaluate_tool_call           # noqa: E402
 from jev_eval.jev_client import evaluate_command                # noqa: E402
 from jev_eval.logging_setup import audit, build_audit_logger    # noqa: E402
+from jev_eval.reader import read_stdin_payload                  # noqa: E402
 
 _probe("jev_eval imports done")
 
@@ -54,63 +55,6 @@ def _emit(payload: dict) -> None:
     # host side get the decision without waiting for pipe EOF.
     sys.stdout.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
-# GUI hosts (Electron/VS Code subprocesses) may keep the write end of the stdin
-# pipe open after delivering the payload, so EOF-terminated reads hang forever.
-_READ_DEADLINE_S = 1.0
-
-def _read_stdin_payload(deadline_s: float) -> str | None:
-    """Collect the hook payload without waiting for pipe EOF.
-
-    Reads incrementally in a daemon thread and returns as soon as the buffer
-    parses as a complete JSON document — no strict prefix of a top-level JSON
-    object is valid, so the first successful parse means the payload is
-    complete, regardless of newlines or pipe state. Returns the raw text on
-    EOF even when unparseable (caller reports "malformed hook payload");
-    returns None on deadline, empty input, or reader failure (caller fails
-    closed with "payload read timeout / empty input").
-    """
-    buffer = bytearray()
-    lock = threading.Lock()
-    data_event = threading.Event()
-    state = {"eof": False}
-
-    def _pump() -> None:
-        try:
-            stream = sys.stdin.buffer
-            while True:
-                chunk = stream.read1(65536)
-                if not chunk:
-                    break
-                with lock:
-                    buffer.extend(chunk)
-                data_event.set()
-        except Exception:
-            pass  # reader failure -> deadline / fail-closed path
-        finally:
-            with lock:
-                state["eof"] = True
-            data_event.set()
-
-    threading.Thread(target=_pump, daemon=True).start()
-    deadline = time.monotonic() + deadline_s
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return None
-        data_event.wait(remaining)
-        data_event.clear()
-        with lock:
-            snapshot = bytes(buffer)
-            eof = state["eof"]
-        if snapshot:
-            try:
-                json.loads(snapshot.decode("utf-8"))
-                return snapshot.decode("utf-8")
-            except ValueError:
-                pass  # incomplete payload — keep reading until complete or EOF
-        if eof:
-            return snapshot.decode("utf-8", errors="replace") if snapshot else None
-
 def main() -> int:
     event = "PreToolUse"
     if "--event" in sys.argv:
@@ -118,7 +62,7 @@ def main() -> int:
         if idx + 1 < len(sys.argv):
             event = sys.argv[idx + 1]
     try:
-        raw = _read_stdin_payload(_READ_DEADLINE_S)
+        raw = read_stdin_payload()
         _probe(f"stdin returned: {'None' if raw is None else f'{len(raw)} bytes'}")
         if raw is None:
             _probe("fail-closed: payload read timeout / empty input")
@@ -140,12 +84,14 @@ def main() -> int:
         args = tool_call.get("args") or {}
         workspace_paths = payload.get("workspacePaths") or []
         conversation_id = payload.get("conversationId") or ""
+        artifact_dir = payload.get("artifactDirectoryPath") or ""
 
         settings = load_settings(workspace_dir=resolve_workspace_dir(os.getcwd()))
         logger = build_audit_logger(settings.log_file)
         ex = extract_args(tool_name, args)
         t1 = evaluate_tool_call(tool_name, ex["command"], ex["cwd"], ex["target"],
-                                workspace_paths, settings.allow_network_commands)
+                                workspace_paths, settings.allow_network_commands,
+                                extra_write_roots=[artifact_dir] if artifact_dir else None)
         if t1 is not None:
             decision = Decision(t1.decision, t1.reason, t1.tier)
         elif tool_name == "run_command":

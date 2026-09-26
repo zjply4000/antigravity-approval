@@ -181,7 +181,7 @@ from typing import NamedTuple
 class Tier1Outcome(NamedTuple):
     decision: str  # allow | deny | ask | force_ask
     reason: str
-    tier: str      # blocklist | whitelist | path_guard | network_gate | write_policy | fallback
+    tier: str      # blocklist | whitelist | path_guard | network_gate | write_policy | artifact | fallback
 
 def _norm(p: str) -> str:
     return os.path.normcase(os.path.abspath(os.path.expanduser(p)))
@@ -197,36 +197,111 @@ def _system_dirs() -> list[str]:
             dirs.append(val)
     return [_norm(d) for d in dirs]
 
-def check_file_target(target: str, cwd: str, workspace_paths: list[str]) -> str | None:
-    """Strict dual containment: lexical abspath AND realpath must be inside a workspace."""
-    if not target:
-        return "file tool missing target path"
+def _credential_dirs() -> list[str]:
+    dirs = [os.path.expanduser("~/.ssh"), os.path.expanduser("~/.gnupg")]
+    return [_norm(d) for d in dirs]
+
+class PathCheck(tuple):
+    """Result of check_file_target: (decision, reason). Inherits from tuple for compatibility."""
+    def __new__(cls, decision: str, reason: str):
+        return super().__new__(cls, (decision, reason))
+
+    @property
+    def decision(self) -> str:
+        return self[0]
+
+    @property
+    def reason(self) -> str:
+        return self[1]
+
+    def __contains__(self, item: object) -> bool:
+        if isinstance(item, str):
+            return item in self[0] or item in self[1]
+        return super().__contains__(item)
+
+def _expand_target(target: str, cwd: str) -> str:
     p = os.path.expanduser(target)
     if not os.path.isabs(p):
         p = os.path.join(cwd or os.getcwd(), p)
+    return p
+
+def check_file_target(target: str, cwd: str, workspace_paths: list[str],
+                      extra_roots: list[str] | None = None,
+                      path_policy: str = "strict_deny") -> tuple[str, str] | None:
+    """Strict dual containment: lexical abspath AND realpath must be inside a workspace.
+
+    `extra_roots` carries host-sanctioned write locations outside the workspace —
+    notably the hook payload's `artifactDirectoryPath`, where Antigravity stores
+    per-conversation artifacts (implementation_plan.md, walkthrough.md, …). Without
+    it those legitimate writes were hard-denied as "outside workspace".
+
+    Security check order:
+    1. System and credential directories -> hard deny
+    2. Workspace boundaries -> ask (strategy_c) or deny (strict_deny)
+    """
+    if not target:
+        return PathCheck("deny", "file tool missing target path")
+    p = _expand_target(target, cwd)
     lex = _norm(p)
     real = _norm(os.path.realpath(p))
+
+    # STEP 1 (SECURITY ORDERING): System & Credential Check FIRST
+    for d in _system_dirs() + _credential_dirs():
+        if _inside(lex, [d]) or _inside(real, [d]):
+            return PathCheck("deny", "target path in system directory or sensitive credential")
+
+    # STEP 2: Workspace Boundary Check
     roots = [_norm(w) for w in (workspace_paths or [])]
+    roots += [_norm(r) for r in (extra_roots or []) if r]
     lex_in, real_in = _inside(lex, roots), _inside(real, roots)
     if not (lex_in and real_in):
         if lex_in != real_in:
-            return (f"junction/symlink target outside workspace "
-                    f"(lex inside={lex_in}, realpath inside={real_in})")
-        return "target path outside workspace"
-    for d in _system_dirs():
-        if _inside(lex, [d]) or _inside(real, [d]):
-            return "target path in system directory"
+            reason = (f"junction/symlink target outside workspace "
+                      f"(lex inside={lex_in}, realpath inside={real_in})")
+        else:
+            reason = "target path outside workspace"
+        if path_policy == "strategy_c":
+            return PathCheck("ask", reason)
+        return PathCheck("deny", reason)
     return None
+
+_ARTIFACT_EXCLUDED_DIR = ".system_generated"
+_ARTIFACT_EXCLUDED_SUFFIX = ".metadata.json"
+
+def _is_sanctioned_artifact(target: str, cwd: str, extra_roots: list[str] | None) -> bool:
+    """True when the target is a host-sanctioned per-conversation artifact we auto-approve.
+
+    The host supplies `artifactDirectoryPath`; writes there are its own scratch (task
+    artifacts, implementation plans), so prompting is pure friction. Host internals
+    under it are excluded so an auto-approved path can't rewrite transcripts or
+    artifact metadata.
+    """
+    roots = [_norm(r) for r in (extra_roots or []) if r]
+    if not roots:
+        return False
+    lex = _norm(_expand_target(target, cwd))
+    if not _inside(lex, roots):
+        return False
+    if _ARTIFACT_EXCLUDED_DIR in lex.split(os.sep):
+        return False
+    return not os.path.basename(lex).endswith(_ARTIFACT_EXCLUDED_SUFFIX)
 
 _FILE_TOOLS = frozenset({"write_to_file", "replace_file_content", "multi_replace_file_content"})
 
 def evaluate_tool_call(tool_name: str, command: str, cwd: str, target: str,
-                       workspace_paths: list[str], allow_network: bool) -> Tier1Outcome | None:
+                       workspace_paths: list[str], allow_network: bool,
+                       extra_write_roots: list[str] | None = None,
+                       path_policy: str = "strict_deny") -> Tier1Outcome | None:
     """Matrix rows 1-4 and 7. None = run_command falls through to Tier 2 (or unknown tool)."""
     if tool_name in _FILE_TOOLS:
-        reason = check_file_target(target, cwd, workspace_paths)
-        if reason:
-            return Tier1Outcome("deny", reason, "path_guard")
+        hit = check_file_target(target, cwd, workspace_paths, extra_roots=extra_write_roots,
+                                path_policy=path_policy)
+        if hit is not None:
+            decision, reason = hit
+            return Tier1Outcome(decision, reason, "path_guard")
+        if _is_sanctioned_artifact(target, cwd, extra_write_roots):
+            return Tier1Outcome("allow", "artifact: host-sanctioned conversation artifact",
+                                "artifact")
         return Tier1Outcome("ask", "file mutations are not auto-approved in v1", "write_policy")
     if tool_name != "run_command":
         return None

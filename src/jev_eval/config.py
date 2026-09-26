@@ -1,5 +1,5 @@
 # src/jev_eval/config.py
-"""Settings loading: process env > workspace .agents/jev.env > user file > defaults."""
+"""Settings loading: process env > workspace env > user file > defaults."""
 from __future__ import annotations
 
 import os
@@ -43,13 +43,31 @@ def _parse_env_file(path: Path) -> dict[str, str]:
     return out
 
 def load_settings(env: Mapping[str, str] | None = None,
-                  workspace_dir: Path | None = None,
-                  user_file: Path | None = None) -> Settings:
+                  workspace_dir: Path | str | None = None,
+                  user_file: Path | str | None = None,
+                  host: str = "antigravity") -> Settings:
     env = dict(os.environ if env is None else env)
     merged = dict(_DEFAULTS)
-    merged.update(_parse_env_file(user_file or Path.home() / ".gemini" / "config" / "jev.env"))
-    if workspace_dir is not None:
-        merged.update(_parse_env_file(Path(workspace_dir) / ".agents" / "jev.env"))
+    ws_path = Path(workspace_dir) if workspace_dir is not None else None
+
+    if host == "zcode":
+        merged["JEV_LOG_FILE"] = str(Path.home() / ".zcode" / "cli" / "log" / "jev_evaluator.log")
+        z_user = Path(user_file) if user_file else (Path.home() / ".zcode" / "jev.env")
+        merged.update(_parse_env_file(z_user))
+        if ws_path:
+            merged.update(_parse_env_file(ws_path / ".zcode" / "jev.env"))
+        # Fallback for TYPESAFE_API_KEY only if not present in env or zcode env files
+        if not env.get("TYPESAFE_API_KEY") and not merged.get("TYPESAFE_API_KEY"):
+            gemini_user = _parse_env_file(Path.home() / ".gemini" / "config" / "jev.env")
+            if gemini_user.get("TYPESAFE_API_KEY"):
+                merged["TYPESAFE_API_KEY"] = gemini_user["TYPESAFE_API_KEY"]
+    else:
+        merged["JEV_LOG_FILE"] = str(Path.home() / ".gemini" / "logs" / "jev_evaluator.log")
+        a_user = Path(user_file) if user_file else (Path.home() / ".gemini" / "config" / "jev.env")
+        merged.update(_parse_env_file(a_user))
+        if ws_path:
+            merged.update(_parse_env_file(ws_path / ".agents" / "jev.env"))
+
     for key in merged:
         if env.get(key):
             merged[key] = env[key]
@@ -85,5 +103,5 @@ def export_sdk_environ(settings: Settings) -> None:
 def resolve_workspace_dir(cwd: str) -> str:
     """Antigravity spawns hooks with CWD = <workspace>/.agents; the workspace
     root — where .agents/jev.env lives — is that directory's parent."""
-    base = os.path.basename(cwd.rstrip("\/"))
-    return os.path.dirname(cwd.rstrip("\/")) if base == ".agents" else cwd
+    base = os.path.basename(cwd.rstrip("/\\"))
+    return os.path.dirname(cwd.rstrip("/\\")) if base == ".agents" else cwd

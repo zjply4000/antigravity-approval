@@ -12,7 +12,7 @@ from .jev_client import Verdict
 class Decision:
     decision: str   # allow | deny | ask | force_ask
     reason: str
-    tier: str       # blocklist | whitelist | path_guard | network_gate | write_policy | jev | fallback
+    tier: str       # blocklist | whitelist | path_guard | network_gate | write_policy | artifact | jev | fallback
     category: str | None = None
     confidence: float | None = None
     latency_ms: int | None = None
@@ -38,7 +38,7 @@ def extract_args(tool_name: str, args: dict) -> dict:
                 "cwd": pick("Cwd", "cwd"), "target": ""}
     if tool_name in ("write_to_file", "replace_file_content", "multi_replace_file_content"):
         return {"command": "", "cwd": pick("Cwd", "cwd"),
-                "target": pick("TargetFile", "AbsolutePath", "target_file", "file_path", "filePath")}
+                "target": pick("TargetFile", "AbsolutePath", "target_file", "file_path", "filePath", "path", "target")}
     return {"command": "", "cwd": "", "target": ""}
 
 def finalize_tier2(settings: Settings, verdict: Verdict | None,
@@ -61,11 +61,15 @@ def finalize_tier2(settings: Settings, verdict: Verdict | None,
                     verdict.category, verdict.confidence, verdict.latency_ms)
 
 def decide(tool_name: str, raw_args: dict, workspace_paths: list[str], settings: Settings,
-           verdict: Verdict | None, cause: str | None = None) -> Decision:
+           verdict: Verdict | None, cause: str | None = None,
+           extra_write_roots: list[str] | None = None,
+           path_policy: str = "strict_deny") -> Decision:
     """Pure pipeline: Tier 1 then Tier 2. `cause` is the tier-2 failure reason (verdict None)."""
     ex = extract_args(tool_name, raw_args)
     t1 = evaluate_tool_call(tool_name, ex["command"], ex["cwd"], ex["target"],
-                            workspace_paths, settings.allow_network_commands)
+                            workspace_paths, settings.allow_network_commands,
+                            extra_write_roots=extra_write_roots,
+                            path_policy=path_policy)
     if t1 is not None:
         return Decision(t1.decision, t1.reason, t1.tier)
     if tool_name == "run_command":
