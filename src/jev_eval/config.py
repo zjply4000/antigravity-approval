@@ -2,6 +2,7 @@
 """Settings loading: process env > workspace env > user file > defaults."""
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +23,7 @@ class Settings:
 _DEFAULTS: dict[str, str] = {
     "TYPESAFE_BASE_URL": "https://api.typesafe.ai",
     "CONFIDENCE_THRESHOLD": "0.96",
-    "EVAL_TIMEOUT_MS": "1500",
+    "EVAL_TIMEOUT_MS": "8000",
     "ALLOW_NETWORK_COMMANDS": "false",
     "JEV_FAIL_MODE": "closed",
     "JEV_LOG_FILE": str(Path.home() / ".gemini" / "logs" / "jev_evaluator.log"),
@@ -42,6 +43,35 @@ def _parse_env_file(path: Path) -> dict[str, str]:
         out[key.strip()] = value.strip().strip('"').strip("'")
     return out
 
+def _parse_config_file(path: Path) -> dict[str, str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return {}
+    if path.suffix.lower() == ".json":
+        try:
+            data = json.loads(text) if text.strip() else {}
+            if isinstance(data, dict):
+                key_map = {
+                    "typesafe_api_key": "TYPESAFE_API_KEY",
+                    "api_key": "TYPESAFE_API_KEY",
+                    "typesafe_base_url": "TYPESAFE_BASE_URL",
+                    "base_url": "TYPESAFE_BASE_URL",
+                    "confidence_threshold": "CONFIDENCE_THRESHOLD",
+                    "eval_timeout_ms": "EVAL_TIMEOUT_MS",
+                    "allow_network_commands": "ALLOW_NETWORK_COMMANDS",
+                    "fail_mode": "JEV_FAIL_MODE",
+                    "log_file": "JEV_LOG_FILE",
+                }
+                out: dict[str, str] = {}
+                for k, v in data.items():
+                    target_k = key_map.get(k.lower(), k.upper())
+                    out[target_k] = str(v)
+                return out
+        except Exception:
+            return {}
+    return _parse_env_file(path)
+
 def load_settings(env: Mapping[str, str] | None = None,
                   workspace_dir: Path | str | None = None,
                   user_file: Path | str | None = None,
@@ -52,21 +82,27 @@ def load_settings(env: Mapping[str, str] | None = None,
 
     if host == "zcode":
         merged["JEV_LOG_FILE"] = str(Path.home() / ".zcode" / "cli" / "log" / "jev_evaluator.log")
+        z_json = Path.home() / ".zcode" / "jev_approval" / "config.json"
+        merged.update(_parse_config_file(z_json))
         z_user = Path(user_file) if user_file else (Path.home() / ".zcode" / "jev.env")
-        merged.update(_parse_env_file(z_user))
+        merged.update(_parse_config_file(z_user))
         if ws_path:
-            merged.update(_parse_env_file(ws_path / ".zcode" / "jev.env"))
+            merged.update(_parse_config_file(ws_path / ".zcode" / "jev_approval" / "config.json"))
+            merged.update(_parse_config_file(ws_path / ".zcode" / "jev.env"))
         # Fallback for TYPESAFE_API_KEY only if not present in env or zcode env files
         if not env.get("TYPESAFE_API_KEY") and not merged.get("TYPESAFE_API_KEY"):
-            gemini_user = _parse_env_file(Path.home() / ".gemini" / "config" / "jev.env")
+            gemini_user = _parse_config_file(Path.home() / ".gemini" / "config" / "jev.env")
             if gemini_user.get("TYPESAFE_API_KEY"):
                 merged["TYPESAFE_API_KEY"] = gemini_user["TYPESAFE_API_KEY"]
     else:
         merged["JEV_LOG_FILE"] = str(Path.home() / ".gemini" / "logs" / "jev_evaluator.log")
+        a_json = Path.home() / ".antigravity" / "jev_approval" / "config.json"
+        merged.update(_parse_config_file(a_json))
         a_user = Path(user_file) if user_file else (Path.home() / ".gemini" / "config" / "jev.env")
-        merged.update(_parse_env_file(a_user))
+        merged.update(_parse_config_file(a_user))
         if ws_path:
-            merged.update(_parse_env_file(ws_path / ".agents" / "jev.env"))
+            merged.update(_parse_config_file(ws_path / ".agents" / "jev_approval" / "config.json"))
+            merged.update(_parse_config_file(ws_path / ".agents" / "jev.env"))
 
     for key in merged:
         if env.get(key):
@@ -80,7 +116,7 @@ def load_settings(env: Mapping[str, str] | None = None,
     try:
         timeout_ms = max(100, int(merged["EVAL_TIMEOUT_MS"]))
     except ValueError:
-        timeout_ms = 1500
+        timeout_ms = 8000
     fail_mode = merged["JEV_FAIL_MODE"].strip().lower()
     if fail_mode not in ("closed", "open"):
         fail_mode = "closed"

@@ -7,7 +7,7 @@ def test_defaults():
     assert s.api_key is None
     assert s.base_url == "https://api.typesafe.ai"
     assert s.confidence_threshold == 0.96
-    assert s.eval_timeout_ms == 1500
+    assert s.eval_timeout_ms == 8000
     assert s.allow_network_commands is False
     assert s.fail_mode == "closed"
 
