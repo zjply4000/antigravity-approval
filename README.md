@@ -1,4 +1,12 @@
-# jev-evaluator
+# antigravity-approval
+
+A fail-closed `PreToolUse` permission guardrail for Antigravity, combining deterministic local rules with TypeSafe Jev classification for ambiguous tool calls. Uncertain or policy-sensitive actions fall back to manual approval (`ask`).
+
+This repository also hosts the shared **`jev-evaluator` policy core** — the `jev_eval` Python package — which [zcode-approval](https://github.com/zjply4000/zcode-approval) reuses to adapt the same policy engine to ZCode's hook protocol.
+
+> **Antigravity 2.0 limitation:** an `allow` decision for `run_command` does not suppress the host permission dialog on current builds — whitelisted commands still prompt unless added to the host's global grants list. `deny` decisions are honored. Details and caveats: [Known Antigravity host limitation](#known-antigravity-host-limitation).
+
+## How evaluation works
 
 An Antigravity `PreToolUse` hook that screens tool calls before they execute. Evaluation is tiered and deterministic-first: a fast local Tier 1 (whitelist, blocklist, network gate, path guard) settles unambiguous commands with no network traffic; ambiguous commands escalate to Tier 2, a single TypeSafe Jev classification call with a hard wall-clock deadline. Every Tier 2 failure — timeout, API error, missing key, malformed answer — fails closed to `ask`, so when the evaluator cannot answer, the command falls back to manual confirmation rather than silent approval.
 
