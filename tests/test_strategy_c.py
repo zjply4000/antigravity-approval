@@ -29,10 +29,9 @@ def make_settings(**over):
 
 def test_credential_dirs_contains_ssh_and_gnupg():
     cdirs = _credential_dirs()
-    ssh_norm = os.path.normcase(os.path.abspath(os.path.expanduser("~/.ssh")))
-    gnupg_norm = os.path.normcase(os.path.abspath(os.path.expanduser("~/.gnupg")))
-    assert ssh_norm in cdirs
-    assert gnupg_norm in cdirs
+    for name in ("~/.ssh", "~/.gnupg", "~/.aws", "~/.azure", "~/.kube", "~/.docker"):
+        norm = os.path.normcase(os.path.abspath(os.path.expanduser(name)))
+        assert norm in cdirs, f"{name} missing from _credential_dirs"
 
 
 def test_system_dir_denied_under_strategy_c(tmp_path):
@@ -55,8 +54,10 @@ def test_credential_file_denied_under_strategy_c(tmp_path):
     ws = str(tmp_path / "workspace")
     ssh_key = os.path.expanduser("~/.ssh/id_rsa")
     gnupg_key = os.path.expanduser("~/.gnupg/secring.gpg")
+    aws_cred = os.path.expanduser("~/.aws/credentials")
+    kube_cfg = os.path.expanduser("~/.kube/config")
 
-    for cred in (ssh_key, gnupg_key):
+    for cred in (ssh_key, gnupg_key, aws_cred, kube_cfg):
         hit = check_file_target(cred, ws, [ws], path_policy="strategy_c")
         assert hit is not None
         assert hit[0] == "deny"

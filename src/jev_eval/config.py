@@ -65,8 +65,11 @@ def _parse_config_file(path: Path) -> dict[str, str]:
                 }
                 out: dict[str, str] = {}
                 for k, v in data.items():
-                    target_k = key_map.get(k.lower(), k.upper())
-                    out[target_k] = str(v)
+                    if v is not None:
+                        val_str = str(v).strip()
+                        if val_str and val_str.lower() != "null":
+                            target_k = key_map.get(k.lower(), k.upper())
+                            out[target_k] = val_str
                 return out
         except Exception:
             return {}

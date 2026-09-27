@@ -10,10 +10,10 @@ stub markers (`scripts/_stub_probe.log`) + host transcripts.
 
 | # | Input | Host behavior | Evidence |
 |---|---|---|---|
-| 1 | hook `{"decision":"deny"}` | **Hard-blocked**, no dialog, our exact reason shown | marker 08:33:22 + transcript `e297e7d3` ("tool call denied by pre-tool hook: stub deny: unconditional block") |
+| 1 | hook `{"decision":"deny"}` | **Hard-blocked**, no dialog, our exact reason shown | marker 08:33:22 + transcript `<session_id>` ("tool call denied by pre-tool hook: stub deny: unconditional block") |
 | 2 | hook `{"decision":"allow"}` | **Dialog** (not honored) | command `git diff --stat` after removing it from the global allow list; stub marker confirms `allow` emitted |
 | 3 | hook `{"decision":"allow"}` + `permissionOverrides:["command(git diff --stat)"]` | **Dialog** (not honored) | marker 08:26:04 (override stub fired, emitted the override) + dialog |
-| 3b | hook `allow` installed at **global** scope (`~/.gemini/config/hooks.json`), workspace hook removed | **Dialog** (not honored) | marker 11:43:27 with `cwd=C:\Users\zjply\.gemini\config` (global hook) + transcript `d530c951` stops at `PLANNER_RESPONSE`. Rules out hook *scope* as the cause. |
+| 3b | hook `allow` installed at **global** scope (`~/.gemini/config/hooks.json`), workspace hook removed | **Dialog** (not honored) | marker 11:43:27 with `cwd=~/.gemini/config` (global hook) + transcript `<session_id>` stops at `PLANNER_RESPONSE`. Rules out hook *scope* as the cause. |
 | 4 | command present in `userSettings/globalPermissionGrants/allow` | **No dialog** (auto-approved) | `git diff --stat` ran while listed; prompted the moment it was removed |
 
 ## Conclusion

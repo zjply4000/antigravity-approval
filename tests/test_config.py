@@ -45,3 +45,11 @@ def test_resolve_workspace_dir_handles_agents_cwd():
     from jev_eval.config import resolve_workspace_dir
     assert resolve_workspace_dir("d:/Projects/ws/.agents") == "d:/Projects/ws"
     assert resolve_workspace_dir("d:/Projects/ws") == "d:/Projects/ws"
+
+def test_json_null_values_do_not_become_none_string(tmp_path):
+    json_file = tmp_path / "config.json"
+    json_file.write_text('{"typesafe_api_key": null, "eval_timeout_ms": 5000}\n', encoding="utf-8")
+    s = load_settings(env={}, user_file=json_file, workspace_dir=None)
+    assert s.api_key is None
+    assert s.eval_timeout_ms == 5000
+

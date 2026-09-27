@@ -190,15 +190,28 @@ def _inside(path: str, roots: list[str]) -> bool:
     return any(path == r or path.startswith(r.rstrip(os.sep) + os.sep) for r in roots)
 
 def _system_dirs() -> list[str]:
-    dirs = ["/etc", "/usr", "/bin", os.path.expanduser("~/.ssh")]
-    for var in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)"):
+    posix_roots = ["/etc", "/usr", "/bin", "/sbin", "/var"]
+    dirs = list(posix_roots)
+    dirs.append(os.path.expanduser("~/.ssh"))
+    for var in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "windir"):
         val = os.environ.get(var)
         if val:
             dirs.append(val)
+    if os.name == "nt":
+        sys_drive = os.environ.get("SystemDrive", "C:")
+        for r in posix_roots:
+            dirs.append(sys_drive + r)
     return [_norm(d) for d in dirs]
 
 def _credential_dirs() -> list[str]:
-    dirs = [os.path.expanduser("~/.ssh"), os.path.expanduser("~/.gnupg")]
+    dirs = [
+        os.path.expanduser("~/.ssh"),
+        os.path.expanduser("~/.gnupg"),
+        os.path.expanduser("~/.aws"),
+        os.path.expanduser("~/.azure"),
+        os.path.expanduser("~/.kube"),
+        os.path.expanduser("~/.docker"),
+    ]
     return [_norm(d) for d in dirs]
 
 class PathCheck(tuple):

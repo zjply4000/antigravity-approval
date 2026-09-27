@@ -72,7 +72,7 @@ Precedence: process env → workspace `.agents/jev.env` → user `~/.gemini/conf
         "hooks": [
           {
             "type": "command",
-            "command": "\"D:/Projects/Jev/antigravity-approval/.venv/Scripts/python.exe\" \"D:/Projects/Jev/antigravity-approval/scripts/jev_evaluator.py\" --event PreToolUse",
+            "command": "\"<path/to/antigravity-approval>/.venv/Scripts/python.exe\" \"<path/to/antigravity-approval>/scripts/jev_evaluator.py\" --event PreToolUse",
             "timeout": 10
           }
         ]

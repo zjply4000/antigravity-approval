@@ -13,3 +13,14 @@ _stub_probe.log
 .idea/
 dump.rdb
 *.log
+
+# Environment & Secret files
+.env
+*.env
+*.env.*
+jev.env
+.superpowers/
+
+# Packaging & Build artifacts
+dist/
+build/
