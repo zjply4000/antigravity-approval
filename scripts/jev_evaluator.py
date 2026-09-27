@@ -44,6 +44,7 @@ logging.basicConfig(stream=sys.stderr, level=logging.ERROR, force=True)
 from jev_eval.config import load_settings, resolve_workspace_dir   # noqa: E402
 from jev_eval.decide import Decision, extract_args, finalize_tier2  # noqa: E402
 from jev_eval.deterministic import evaluate_tool_call           # noqa: E402
+from jev_eval.formatter import format_fallback_reason           # noqa: E402
 from jev_eval.jev_client import evaluate_command                # noqa: E402
 from jev_eval.logging_setup import audit, build_audit_logger    # noqa: E402
 from jev_eval.reader import read_stdin_payload                  # noqa: E402
@@ -66,13 +67,13 @@ def main() -> int:
         _probe(f"stdin returned: {'None' if raw is None else f'{len(raw)} bytes'}")
         if raw is None:
             _probe("fail-closed: payload read timeout / empty input")
-            _emit({"decision": "ask", "reason": "payload read timeout / empty input"})
+            _emit({"decision": "ask", "reason": format_fallback_reason("payload read timeout / empty input")})
             return 0
         payload = json.loads(raw) if raw.strip() else {}
         _probe(f"payload parsed: tool={((payload.get('toolCall') or {}).get('name'))!r}")
     except Exception as exc:
         _probe(f"malformed payload: {exc}")
-        _emit({"decision": "ask", "reason": f"malformed hook payload: {exc}"})
+        _emit({"decision": "ask", "reason": format_fallback_reason(f"malformed hook payload: {exc}")})
         return 0
     if event != "PreToolUse":
         _probe(f"event={event!r} -> empty decision")
@@ -87,11 +88,15 @@ def main() -> int:
         artifact_dir = payload.get("artifactDirectoryPath") or ""
 
         settings = load_settings(workspace_dir=resolve_workspace_dir(os.getcwd()))
-        logger = build_audit_logger(settings.log_file)
+        try:
+            logger = build_audit_logger(settings.log_file)
+        except Exception:
+            logger = None
         ex = extract_args(tool_name, args)
         t1 = evaluate_tool_call(tool_name, ex["command"], ex["cwd"], ex["target"],
                                 workspace_paths, settings.allow_network_commands,
-                                extra_write_roots=[artifact_dir] if artifact_dir else None)
+                                extra_write_roots=[artifact_dir] if artifact_dir else None,
+                                path_policy=settings.path_policy)
         if t1 is not None:
             decision = Decision(t1.decision, t1.reason, t1.tier)
         elif tool_name == "run_command":
@@ -108,7 +113,7 @@ def main() -> int:
         _probe(f"decision emitted: {decision.decision} ({decision.reason[:60]})")
     except Exception as exc:
         _probe(f"evaluator crash: {exc}")
-        _emit({"decision": "ask", "reason": f"evaluator crash: {exc}"})
+        _emit({"decision": "ask", "reason": format_fallback_reason(f"evaluator crash: {exc}")})
     finally:
         sys.stdout.flush()
     return 0

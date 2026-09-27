@@ -178,7 +178,15 @@ def test_network_allowed_when_flag_true():
 def test_file_tool_asks_after_path_guard():
     out = evaluate_tool_call("write_to_file", "", "C:/ws", "C:/ws/a.py",
                              ["C:/ws"], allow_network=False)
-    assert out is not None and out.decision == "ask" and out.tier == "write_policy"
+    assert out is not None and out.decision == "allow" and out.tier == "safe_source"
+
+    out_bin = evaluate_tool_call("write_to_file", "", "C:/ws", "C:/ws/a.bin",
+                                 ["C:/ws"], allow_network=False)
+    assert out_bin is not None and out_bin.decision == "ask" and out_bin.tier == "write_policy"
+
+    out_sens = evaluate_tool_call("write_to_file", "", "C:/ws", "C:/ws/.env",
+                                  ["C:/ws"], allow_network=False)
+    assert out_sens is not None and out_sens.decision == "ask" and out_sens.tier == "sensitive_file"
 
 def test_artifact_dir_outside_workspace_denied_without_extra_root(tmp_path):
     artifact = tmp_path / "brain" / "conv1"

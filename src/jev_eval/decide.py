@@ -41,23 +41,31 @@ def extract_args(tool_name: str, args: dict) -> dict:
                 "target": pick("TargetFile", "AbsolutePath", "target_file", "file_path", "filePath", "path", "target")}
     return {"command": "", "cwd": "", "target": ""}
 
+from .formatter import format_fallback_reason, format_tier2_reason
+
 def finalize_tier2(settings: Settings, verdict: Verdict | None,
                    cause: str | None = None) -> Decision:
     """Matrix rows 5, 6, 8. `cause` carries the tier-2 failure reason when verdict is None."""
     if verdict is None:
+        fallback_msg = format_fallback_reason(cause)
         if settings.fail_mode == "open":
             return Decision("allow",
-                            f"JEV_FAIL_MODE=open: tier-2 unavailable ({cause or 'unknown cause'})",
+                            f"JEV_FAIL_MODE=open: {fallback_msg}",
                             "fallback")
-        return Decision("ask", cause or "tier-2 evaluation unavailable (timeout/error/missing key)",
-                        "fallback")
+        return Decision("ask", fallback_msg, "fallback")
     approvable = (verdict.category in ("read_only", "standard_dev")
                   or (verdict.category == "network_outbound" and settings.allow_network_commands))
-    summary = f"jev: {verdict.category} conf={verdict.confidence:.3f}"
+    reason = format_tier2_reason(
+        verdict.category,
+        verdict.confidence,
+        settings.confidence_threshold,
+        approvable=approvable,
+        allow_network=settings.allow_network_commands,
+    )
     if approvable and verdict.confidence >= settings.confidence_threshold:
-        return Decision("allow", summary, "jev", verdict.category, verdict.confidence,
+        return Decision("allow", reason, "jev", verdict.category, verdict.confidence,
                         verdict.latency_ms)
-    return Decision("ask", f"{summary} below threshold or disallowed category", "jev",
+    return Decision("ask", reason, "jev",
                     verdict.category, verdict.confidence, verdict.latency_ms)
 
 def decide(tool_name: str, raw_args: dict, workspace_paths: list[str], settings: Settings,

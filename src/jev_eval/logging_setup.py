@@ -24,7 +24,9 @@ def build_audit_logger(log_file: Path) -> logging.Logger:
     logger.addHandler(handler)
     return logger
 
-def audit(logger: logging.Logger, **fields: object) -> None:
+def audit(logger: logging.Logger | None, **fields: object) -> None:
+    if logger is None:
+        return
     record = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
               + f".{int(time.time() * 1000) % 1000:03d}Z", **fields}
     try:

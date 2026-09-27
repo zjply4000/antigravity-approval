@@ -301,31 +301,32 @@ def _is_sanctioned_artifact(target: str, cwd: str, extra_roots: list[str] | None
 
 _FILE_TOOLS = frozenset({"write_to_file", "replace_file_content", "multi_replace_file_content"})
 
+from .formatter import format_fallback_reason, format_tier1_reason
+from .file_guard import evaluate_file_write
+
 def evaluate_tool_call(tool_name: str, command: str, cwd: str, target: str,
                        workspace_paths: list[str], allow_network: bool,
                        extra_write_roots: list[str] | None = None,
                        path_policy: str = "strict_deny") -> Tier1Outcome | None:
     """Matrix rows 1-4 and 7. None = run_command falls through to Tier 2 (or unknown tool)."""
     if tool_name in _FILE_TOOLS:
-        hit = check_file_target(target, cwd, workspace_paths, extra_roots=extra_write_roots,
-                                path_policy=path_policy)
-        if hit is not None:
-            decision, reason = hit
-            return Tier1Outcome(decision, reason, "path_guard")
-        if _is_sanctioned_artifact(target, cwd, extra_write_roots):
-            return Tier1Outcome("allow", "artifact: host-sanctioned conversation artifact",
-                                "artifact")
-        return Tier1Outcome("ask", "file mutations are not auto-approved in v1", "write_policy")
+        return evaluate_file_write(
+            target,
+            cwd,
+            workspace_paths,
+            extra_roots=extra_write_roots,
+            path_policy=path_policy,
+        )
     if tool_name != "run_command":
         return None
     segments = split_chain(command)
     if not segments:
-        return Tier1Outcome("ask", "empty or unparsable command", "fallback")
+        return Tier1Outcome("ask", format_fallback_reason("empty or unparsable command"), "fallback")
     subst = [has_substitution(seg) for seg in segments]
     for seg in segments:
         hit = blocklist_hit(seg)
         if hit:
-            return Tier1Outcome("deny", f"blocklist: {hit}", "blocklist")
+            return Tier1Outcome("deny", format_tier1_reason("blocklist", hit, ""), "blocklist")
     whitelisted = True
     for seg, is_subst in zip(segments, subst):
         tokens = tokenize(seg)
@@ -337,9 +338,9 @@ def evaluate_tool_call(tool_name: str, command: str, cwd: str, target: str,
             whitelisted = False
             break
     if whitelisted:
-        return Tier1Outcome("allow", "whitelist: read-only command", "whitelist")
+        return Tier1Outcome("allow", format_tier1_reason("whitelist", "whitelist: read-only command", ""), "whitelist")
     if not allow_network:
         for seg, tokens in ((s, tokenize(s)) for s in segments):
             if is_network_command(seg, tokens):
-                return Tier1Outcome("force_ask", f"network command: {seg!r}", "network_gate")
+                return Tier1Outcome("force_ask", format_tier1_reason("network_gate", f"network command: {seg!r}", ""), "network_gate")
     return None

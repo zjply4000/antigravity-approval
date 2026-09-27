@@ -19,6 +19,7 @@ class Settings:
     allow_network_commands: bool
     fail_mode: str  # "closed" | "open"
     log_file: Path
+    path_policy: str = "strategy_c"
 
 _DEFAULTS: dict[str, str] = {
     "TYPESAFE_BASE_URL": "https://api.typesafe.ai",
@@ -27,6 +28,7 @@ _DEFAULTS: dict[str, str] = {
     "ALLOW_NETWORK_COMMANDS": "false",
     "JEV_FAIL_MODE": "closed",
     "JEV_LOG_FILE": str(Path.home() / ".gemini" / "logs" / "jev_evaluator.log"),
+    "JEV_PATH_POLICY": "strategy_c",
 }
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -123,6 +125,9 @@ def load_settings(env: Mapping[str, str] | None = None,
     fail_mode = merged["JEV_FAIL_MODE"].strip().lower()
     if fail_mode not in ("closed", "open"):
         fail_mode = "closed"
+    path_policy = merged.get("JEV_PATH_POLICY", "strategy_c").strip().lower()
+    if path_policy not in ("strategy_c", "strict_deny"):
+        path_policy = "strategy_c"
     api_key = env.get("TYPESAFE_API_KEY") or merged.get("TYPESAFE_API_KEY") or None
     return Settings(
         api_key=api_key,
@@ -132,6 +137,7 @@ def load_settings(env: Mapping[str, str] | None = None,
         allow_network_commands=merged["ALLOW_NETWORK_COMMANDS"].strip().lower() in _TRUE,
         fail_mode=fail_mode,
         log_file=Path(merged["JEV_LOG_FILE"]).expanduser(),
+        path_policy=path_policy,
     )
 
 def export_sdk_environ(settings: Settings) -> None:

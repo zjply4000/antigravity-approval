@@ -44,9 +44,23 @@ def test_destructive_denies():
     assert proc.returncode == 0
     assert json.loads(proc.stdout)["decision"] == "deny"
 
-def test_write_tool_asks():
+def test_write_tool_allows_safe_source():
     proc = run_hook(fixture("write_file.json"))
-    assert json.loads(proc.stdout)["decision"] == "ask"
+    assert proc.returncode == 0
+    decision = json.loads(proc.stdout)
+    assert decision["decision"] == "allow"
+    assert "代码编写" in decision["reason"]
+
+def test_write_tool_sensitive_file_asks():
+    payload = json.dumps({
+        "toolCall": {"name": "write_to_file", "args": {"TargetFile": "D:/proj/.env", "Content": "SECRET=1"}},
+        "workspacePaths": ["D:/proj"],
+    })
+    proc = run_hook(payload)
+    assert proc.returncode == 0
+    decision = json.loads(proc.stdout)
+    assert decision["decision"] == "ask"
+    assert "敏感配置" in decision["reason"]
 
 def test_malformed_payload_asks_with_exit_zero():
     proc = run_hook("not json at all")
@@ -109,3 +123,33 @@ def test_open_stdin_burst_without_newline_answers():
     """Antigravity may also send a single burst with NO trailing newline."""
     line = _answer_with_open_stdin(fixture("benign.json"))
     assert json.loads(line)["decision"] == "allow"
+
+def test_outside_workspace_write_asks_under_strategy_c(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    outside = tmp_path / "outside" / "notes.txt"
+    outside.parent.mkdir()
+    payload = json.dumps({
+        "toolCall": {"name": "write_to_file", "args": {"TargetFile": str(outside), "Content": "hello"}},
+        "workspacePaths": [str(ws)],
+    })
+    proc = run_hook(payload)
+    assert proc.returncode == 0
+    decision = json.loads(proc.stdout)
+    assert decision["decision"] == "ask"
+    assert "工作区外部" in decision["reason"]
+
+def test_system_path_write_denies_under_strategy_c(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    sys_path = "C:/Windows/System32/evil.dll" if sys.platform == "win32" else "/etc/evil.conf"
+    payload = json.dumps({
+        "toolCall": {"name": "write_to_file", "args": {"TargetFile": sys_path, "Content": "evil"}},
+        "workspacePaths": [str(ws)],
+    })
+    proc = run_hook(payload)
+    assert proc.returncode == 0
+    decision = json.loads(proc.stdout)
+    assert decision["decision"] == "deny"
+    assert "系统目录或私钥凭据" in decision["reason"]
+

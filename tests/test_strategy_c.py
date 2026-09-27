@@ -107,7 +107,8 @@ def test_evaluate_tool_call_strategy_c(tmp_path):
     assert out_c is not None
     assert out_c.decision == "ask"
     assert out_c.tier == "path_guard"
-    assert out_c.reason == "target path outside workspace"
+    assert out_c.reason is not None
+    assert "工作区外部" in out_c.reason
 
     # System path under strategy_c -> Tier1Outcome deny (path_guard)
     out_sys = evaluate_tool_call(
@@ -116,7 +117,7 @@ def test_evaluate_tool_call_strategy_c(tmp_path):
     assert out_sys is not None
     assert out_sys.decision == "deny"
     assert out_sys.tier == "path_guard"
-    assert "system directory or sensitive credential" in out_sys.reason
+    assert "系统目录或私钥凭据" in out_sys.reason
 
     # Default policy -> deny (path_guard)
     out_default = evaluate_tool_call(
@@ -144,7 +145,8 @@ def test_decide_respects_path_policy(tmp_path):
     )
     assert d_c.decision == "ask"
     assert d_c.tier == "path_guard"
-    assert d_c.reason == "target path outside workspace"
+    assert d_c.reason is not None
+    assert "工作区外部" in d_c.reason
 
     # strategy_c on system path -> deny
     d_sys = decide(
@@ -157,7 +159,7 @@ def test_decide_respects_path_policy(tmp_path):
     )
     assert d_sys.decision == "deny"
     assert d_sys.tier == "path_guard"
-    assert "system directory or sensitive credential" in d_sys.reason
+    assert "系统目录或私钥凭据" in d_sys.reason
 
     # default (strict_deny) on regular outside -> deny
     d_strict = decide(

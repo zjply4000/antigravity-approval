@@ -47,7 +47,7 @@ def test_verdict_none_fail_modes():
 
 def test_tier2_cause_reaches_reason():
     d = finalize_tier2(make_settings(), None, "missing TYPESAFE_API_KEY")
-    assert d.decision == "ask" and "missing TYPESAFE_API_KEY" in d.reason
+    assert d.decision == "ask" and "TYPESAFE_API_KEY" in d.reason
 
 def test_decide_composes_tier1_and_tier2():
     s = make_settings()
@@ -60,8 +60,14 @@ def test_decide_composes_tier1_and_tier2():
     assert d3.decision == "allow" and d3.tier == "jev" and d3.confidence == 0.98
 
 def test_file_tool_asks_via_decide():
-    d = decide("write_to_file", {"TargetFile": "C:/ws/a.py"}, ["C:/ws"], make_settings(), None)
-    assert d.decision == "ask" and d.tier == "write_policy"
+    d_src = decide("write_to_file", {"TargetFile": "C:/ws/a.py"}, ["C:/ws"], make_settings(), None)
+    assert d_src.decision == "allow" and d_src.tier == "safe_source"
+
+    d_bin = decide("write_to_file", {"TargetFile": "C:/ws/a.bin"}, ["C:/ws"], make_settings(), None)
+    assert d_bin.decision == "ask" and d_bin.tier == "write_policy"
+
+    d_sens = decide("write_to_file", {"TargetFile": "C:/ws/.env"}, ["C:/ws"], make_settings(), None)
+    assert d_sens.decision == "ask" and d_sens.tier == "sensitive_file"
 
 def test_unknown_tool_asks():
     d = decide("manage_task", {}, [], make_settings(), None)
