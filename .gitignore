@@ -9,3 +9,7 @@ __pycache__/
 .history/
 .agents/*.bak
 _hook_probe.log
+_stub_probe.log
+.idea/
+dump.rdb
+*.log

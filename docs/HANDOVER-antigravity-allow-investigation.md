@@ -1,5 +1,17 @@
 # Handover — Investigation: Antigravity ignores the hook's `allow` decision
 
+> **SUPERSEDED 2026-09-20 — see `docs/FINDINGS-antigravity-hook-decisions.md`.**
+> The investigation is CLOSED with clean evidence. Corrections to this document:
+> (1) the §10 "environment note" claiming the `.venv` is broken is **false** — the venv
+> (Python 3.10.10) works, `typesafe_sdk` imports, and 76 tests pass; (2) the §10
+> "asymmetric host bug on IDE 2.5.5" framing is replaced by the verified finding that
+> the **2.0 app** honors `deny` but ignores `allow`/`allow`+`permissionOverrides`, and
+> that the only auto-approve mechanism is `userSettings/globalPermissionGrants/allow`;
+> (3) the §10 "Probe E transcript denial" evidence does not exist on disk; (4) any
+> single-vs-chained-command differential is a grant-list artifact, not a host policy.
+> Use `scripts/set_probe_hook.py` to switch hook targets; stubs now write provable
+> markers to `scripts/_stub_probe.log`.
+
 **Purpose of this document:** let a fresh session (or a person) resume the open investigation without re-deriving anything. Everything below is evidence-backed; timestamps are local (UTC+8), 2026-09-19.
 
 **Repo:** `D:\Projects\Jev\antigravity-approval` · branch `main` · HEAD `db0f2d9` · suite: **76 passed, 0 warnings**

@@ -2,6 +2,16 @@
 
 An Antigravity `PreToolUse` hook that screens tool calls before they execute. Evaluation is tiered and deterministic-first: a fast local Tier 1 (whitelist, blocklist, network gate, path guard) settles unambiguous commands with no network traffic; ambiguous commands escalate to Tier 2, a single TypeSafe Jev classification call with a hard wall-clock deadline. Every Tier 2 failure — timeout, API error, missing key, malformed answer — fails closed to `ask`, so when the evaluator cannot answer, the command falls back to manual confirmation rather than silent approval.
 
+## File writes and conversation artifacts
+
+File-mutating tools (`write_to_file`, `replace_file_content`, `multi_replace_file_content`) inside the workspace always `ask` — v1 never auto-approves file mutations. A target outside every workspace is `deny` (path guard), **except** the host-sanctioned per-conversation artifact directory the payload supplies as `artifactDirectoryPath` (`~/.gemini/antigravity/brain/<conversationId>/…`), where Antigravity stores its own task artifacts and implementation plans: writes there are auto-approved (`allow`, tier `artifact`). The auto-approve is deliberately narrow — targets under `.system_generated/` and any `*.metadata.json` fall back to `ask`, so the agent cannot rewrite transcripts or artifact metadata through an auto-approved path.
+
+## Known Antigravity host limitation
+
+On the Antigravity 2.0 app, a hook `allow` does **not** suppress the permission dialog for `run_command`; only the host's own `userSettings/globalPermissionGrants/allow` list does. `deny` *is* honored. So on current builds this hook's practical value is a **deny-only guardrail** plus artifact auto-approval; whitelisted commands still prompt unless you add them to that global list. Evidence and reproduction: `docs/FINDINGS-antigravity-hook-decisions.md`.
+
+Caveat: the ignore-`allow` behavior was proven for `run_command` only. Whether the host also ignores `allow` for file tools (and thus still prompts for artifact writes) is **unverified** on this build; the artifact `allow` is correct per the documented contract and takes effect on any host that honors `allow`.
+
 ## Residual risk
 
 > The blocklist is defense-in-depth, not a security boundary. A novel destructive command that Jev classifies `standard_dev` with confidence ≥ 0.96 would be auto-approved. Mitigations: the threshold, the blocklist, chain splitting, and the audit log review loop. Raise `CONFIDENCE_THRESHOLD` toward 0.98 after reviewing logs.

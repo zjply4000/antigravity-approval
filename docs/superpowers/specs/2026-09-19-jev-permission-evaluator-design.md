@@ -102,12 +102,13 @@ Exit codes are irrelevant to decisions: the process exits 0 after printing a dec
 | # | Situation | Decision |
 |---|---|---|
 | 1 | Command matches blocklist (any shell) | `deny` + reason |
-| 2 | File tool target escapes containment — lexically or via symlink/junction resolution — or lands in a system directory | `deny` + reason (names junction/symlink escape when detected) |
+| 2 | File tool target escapes containment — lexically or via symlink/junction resolution — or lands in a system directory. Containment roots are `workspacePaths` **plus** the payload's `artifactDirectoryPath` | `deny` + reason (names junction/symlink escape when detected) |
 | 3 | Every segment tokenizes to a whitelisted read-only pattern, with no redirections, write operators, or substitution constructs anywhere in the command | `allow` + reason |
 | 4 | Network command (curl/ssh-class, or package-manager install/publish form) and `ALLOW_NETWORK_COMMANDS=false` | `force_ask` + reason |
 | 5 | `run_command`, Jev: confidence ≥ threshold ∧ (category ∈ {read_only, standard_dev} ∨ (category = network_outbound ∧ ALLOW_NETWORK_COMMANDS=true)) | `allow` + reason incl. category/confidence |
 | 6 | `run_command`, Jev: anything else (`destructive`, or `network_outbound` with the flag false — normally unreachable via row 4, or confidence < threshold) | `ask` + reason |
-| 7 | `write_to_file` / `replace_file_content` (not denied by row 2) | `ask` + reason |
+| 7 | `write_to_file` / `replace_file_content` (not denied by row 2) whose target is inside `artifactDirectoryPath`, excluding `.system_generated/**` and `*.metadata.json` | `allow` + reason (tier `artifact`) |
+| 7b | `write_to_file` / `replace_file_content` (not denied by row 2, not row 7) | `ask` + reason |
 | 8 | Any error, timeout, missing key, malformed payload, unknown tool | `ask` (or `allow` only if `JEV_FAIL_MODE=open`, §6.2) |
 
 Order matters: rows are evaluated 1 → 2 → 3 → 4 → 5/6/7 → 8.
@@ -224,7 +225,7 @@ JSONL, one object per line, `RotatingFileHandler` 5 MB × 3 backups:
 {"ts": "2026-09-19T12:00:00.123Z", "conversationId": "...", "tool": "run_command", "input": "npm test", "tier": "jev", "decision": "allow", "reason": "standard_dev conf=0.982", "category": "standard_dev", "confidence": 0.982, "latency_ms": 118, "fail_mode": "closed"}
 ```
 
-The API key and file **contents** are never logged (paths only). `tier` ∈ `blocklist | whitelist | path_guard | network_gate | write_policy | jev | fallback`.
+The API key and file **contents** are never logged (paths only). `tier` ∈ `blocklist | whitelist | path_guard | network_gate | write_policy | artifact | jev | fallback`.
 
 ### 6.7 Hook registration (machine-local, generated)
 
