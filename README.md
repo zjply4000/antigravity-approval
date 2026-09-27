@@ -1,3 +1,5 @@
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 # antigravity-approval
 
 A fail-closed `PreToolUse` permission guardrail for Antigravity, combining deterministic local rules with TypeSafe Jev classification for ambiguous tool calls. Uncertain or policy-sensitive actions fall back to manual approval (`ask`).
