@@ -74,6 +74,47 @@ def has_substitution(segment: str) -> bool:
     """$(), backticks, <(. Single-quoted spans suppress expansion; double-quoted don't."""
     return bool(_SUBST_RE.search(_mask_quoted(segment, "'")))
 
+
+# --- bash-level write targets (redirect + tee-family operands) ----------------------
+
+_REDIRECT_OP_RE = re.compile(r"\d*>>|&>|>&|>\||\d*>")
+_TEE_CMDLETS = frozenset({"tee", "out-file", "set-content", "add-content"})
+_TARGET_STOP_CHARS = " \t\n|;&<>"
+
+
+def write_targets(segment: str) -> list[str]:
+    """File targets written by a segment: redirection targets and write-cmdlet
+    operands (tee / out-file / set-content / add-content).
+
+    Operators are located on quote-masked text; each target span is taken from
+    the ORIGINAL text (masking is position-preserving) and unquoted once, so
+    quoted targets keep their content. FD duplications (2>&1) produce no
+    targets. Unexpanded `$var` targets are returned literally and resolve
+    lexically through check_file_target (usually inside cwd → no verdict);
+    substitution-bearing segments are separately barred from the whitelist,
+    so unexpanded escapes fall to Tier 2 rather than bypass the guard.
+    """
+    masked = _mask_quoted(segment, "\"'")
+    masked = _FD_REDIRECT_RE.sub(lambda m: _MASK * len(m.group()), masked)
+    targets: list[str] = []
+    for m in _REDIRECT_OP_RE.finditer(masked):
+        pos = m.end()
+        while pos < len(masked) and masked[pos] in " \t":
+            pos += 1
+        start = pos
+        while pos < len(masked) and masked[pos] not in _TARGET_STOP_CHARS:
+            pos += 1
+        if pos > start:
+            target = segment[start:pos]
+            if len(target) >= 2 and target[0] == target[-1] and target[0] in "\"'":
+                target = target[1:-1]
+            if target:
+                targets.append(target)
+    tokens = tokenize(segment) or []
+    if tokens and tokens[0].lower() in _TEE_CMDLETS:
+        targets.extend(tok for tok in tokens[1:] if not tok.startswith("-"))
+    return targets
+
 _BLOCKLIST_TESTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\brm\b[^;|&]*-\w*r\w*f", re.IGNORECASE), "rm recursive force"),
     (re.compile(r"\brm\b[^;|&]*-\w*f\w*r", re.IGNORECASE), "rm force recursive"),
@@ -129,8 +170,9 @@ def _blocklist_scan_texts(segment: str) -> list[str]:
             scans.append(inner)
     return scans
 
-def blocklist_hit(segment: str) -> str | None:
-    """Reason label if the segment matches the blocklist, else None.
+def _pattern_scan(segment: str,
+                  tests: list[tuple[re.Pattern[str], str]]) -> str | None:
+    """Label of the first matching pattern in `tests`, else None.
 
     Scans quote-masked text (protects quoted prose). Substitution-bearing
     segments are additionally scanned raw — the tokenizer glues `$(rm` into
@@ -140,10 +182,40 @@ def blocklist_hit(segment: str) -> str | None:
     itself, not prose.
     """
     for scanned in _blocklist_scan_texts(segment):
-        for pattern, label in _BLOCKLIST_TESTS:
+        for pattern, label in tests:
             if pattern.search(scanned):
                 return label
     return None
+
+
+def blocklist_hit(segment: str) -> str | None:
+    """Reason label if the segment matches the blocklist, else None."""
+    return _pattern_scan(segment, _BLOCKLIST_TESTS)
+
+
+# --- destructive git operations (force_ask, not deny: sometimes legitimate) ---
+
+_FORCE_ASK_TESTS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bgit\b[^;|&]*\sreset\b[^;|&]*--hard\b", re.IGNORECASE),
+     "git reset --hard"),
+    (re.compile(r"\bgit\b[^;|&]*\sclean\b(?=[^;|&]*\s-{1,2}[\w-]*f)", re.IGNORECASE),
+     "git clean -f"),
+    (re.compile(r"\bgit\b[^;|&]*\spush\b[^;|&]*\s(?:-{1,2}f\b|--force\b)", re.IGNORECASE),
+     "git push --force"),
+    (re.compile(r"\bgit\b[^;|&]*\scheckout\b[^;|&]*\s--\s*\S", re.IGNORECASE),
+     "git checkout -- discard"),
+    (re.compile(r"\bgit\b\s+restore\b(?![^;|&]*--staged\b)", re.IGNORECASE),
+     "git restore worktree"),
+]
+
+
+def force_ask_hit(segment: str) -> str | None:
+    """Reason label for irreversible-but-sometimes-legitimate operations.
+
+    Same scan surfaces as the blocklist, but the outcome is force_ask
+    (mandatory human confirmation) rather than deny.
+    """
+    return _pattern_scan(segment, _FORCE_ASK_TESTS)
 
 _NETWORK_FIRST = frozenset({
     "curl", "wget", "ssh", "scp", "sftp", "nc", "ncat", "telnet", "ftp",
@@ -163,12 +235,19 @@ def is_network_command(segment: str, tokens: list[str] | None) -> bool:
 
 _WHITELIST_PREFIXES: tuple[tuple[str, ...], ...] = (
     ("git", "status"), ("git", "diff"), ("git", "log"), ("git", "show"),
-    ("git", "--version"),
-    ("ls",), ("dir",), ("pwd",), ("echo",), ("cat",), ("type",), ("get-content",),
-    ("select-string",), ("grep",), ("findstr",), ("head",), ("tail",), ("more",), ("out-host",),
+    ("git", "--version"), ("git", "rev-parse"),
+    ("ls",), ("dir",), ("pwd",), ("echo",), ("printf",), ("cat",), ("type",),
+    ("get-content",), ("select-string",), ("grep",), ("findstr",), ("head",),
+    ("tail",), ("more",), ("out-host",), ("stat",), ("wc",), ("diff",),
+    ("which",), ("where",),
     ("python", "--version"), ("python3", "--version"),
     ("node", "--version"), ("npm", "--version"),
 )
+
+# Commands whose `-o` flag is read-only (grep: only-matching, ls: long format).
+# Everywhere else `-o` may name an output file (gcc/ffmpeg style) and keeps its
+# blanket whitelist veto alongside `--output=`.
+_O_READONLY_COMMANDS = frozenset({"grep", "egrep", "fgrep", "ls"})
 
 def is_whitelisted(tokens: list[str]) -> bool:
     if not tokens:
@@ -181,7 +260,7 @@ from typing import NamedTuple
 class Tier1Outcome(NamedTuple):
     decision: str  # allow | deny | ask | force_ask
     reason: str
-    tier: str      # blocklist | whitelist | path_guard | network_gate | write_policy | artifact | fallback
+    tier: str      # blocklist | whitelist | path_guard | network_gate | git_force_ask | write_policy | artifact | fallback
 
 def _norm(p: str) -> str:
     return os.path.normcase(os.path.abspath(os.path.expanduser(p)))
@@ -327,6 +406,28 @@ def evaluate_tool_call(tool_name: str, command: str, cwd: str, target: str,
         hit = blocklist_hit(seg)
         if hit:
             return Tier1Outcome("deny", format_tier1_reason("blocklist", hit, ""), "blocklist")
+    # Bash-level write-target guard: redirect/tee operands go through the same
+    # dual-containment path check as file tools (deny in system/credential
+    # dirs; ask outside workspace under strategy_c). Runs before the git
+    # force_ask scan so a deny is never downgraded by an ask-tier outcome.
+    for seg in segments:
+        for tgt in write_targets(seg):
+            verdict = check_file_target(tgt, cwd, workspace_paths,
+                                        extra_roots=extra_write_roots,
+                                        path_policy=path_policy)
+            if verdict is not None:
+                decision, reason = verdict
+                return Tier1Outcome(
+                    decision,
+                    format_tier1_reason("path_guard", reason, tgt, decision=decision),
+                    "path_guard")
+    for seg in segments:
+        hit = force_ask_hit(seg)
+        if hit:
+            return Tier1Outcome(
+                "force_ask",
+                format_tier1_reason("git_force_ask", hit, ""),
+                "git_force_ask")
     whitelisted = True
     for seg, is_subst in zip(segments, subst):
         tokens = tokenize(seg)
@@ -334,7 +435,8 @@ def evaluate_tool_call(tool_name: str, command: str, cwd: str, target: str,
             whitelisted = False
             break
         lowered = [t.lower() for t in tokens]
-        if "-o" in lowered or any(t.startswith("--output=") for t in lowered):
+        if ("-o" in lowered and lowered[0] not in _O_READONLY_COMMANDS) \
+                or any(t.startswith("--output=") for t in lowered):
             whitelisted = False
             break
     if whitelisted:

@@ -76,6 +76,9 @@ def format_tier1_reason(tier: str, raw_reason: str, target: str = "", decision: 
     if tier == "network_gate":
         return "🟠【网络外联 · 需关注】命令涉及外部网络请求 | 依网络防护策略需人工确认"
 
+    if tier == "git_force_ask":
+        return f"🔴【不可逆 Git · 需确认】检测到破坏性 Git 操作 ({raw_reason}) | 需人工确认"
+
     if tier == "artifact":
         return "📋【宿主工件 · 自动放行】写入宿主专属对话工件或项目记忆"
 

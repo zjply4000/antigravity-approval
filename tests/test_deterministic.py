@@ -267,3 +267,156 @@ def test_blocklist_sees_through_shell_invocation_quoting():
     out = evaluate_tool_call("run_command", 'cmd /c "if exist build rmdir /s /q build"',
                              "C:/ws", "", ["C:/ws"], allow_network=False)
     assert out is not None and out.decision == "deny" and out.tier == "blocklist"
+
+
+# --- bash-level write-target guard -------------------------------------------------
+
+from jev_eval.deterministic import write_targets, force_ask_hit
+
+def test_write_targets_redirects():
+    assert write_targets("echo hi > src/x.py") == ["src/x.py"]
+    assert write_targets("echo hi >> log.txt") == ["log.txt"]
+    assert write_targets("python x 2> err.txt 2>> err2.txt") == ["err.txt", "err2.txt"]
+    assert write_targets("make >| out.log") == ["out.log"]
+    assert write_targets("run &> all.log") == ["all.log"]
+
+def test_write_targets_fd_dup_no_targets():
+    assert write_targets("git diff 2>&1") == []
+    assert write_targets("cmd >&2") == []
+    assert write_targets("run >& all.log") == []  # >& masked as FD form: conservative Tier 2
+    assert write_targets("run 2>&1 >out.txt") == ["out.txt"]
+
+def test_write_targets_quoted_target_keeps_content():
+    assert write_targets('echo hi > "my file.txt"') == ["my file.txt"]
+    assert write_targets("echo hi > 'log two.txt'") == ["log two.txt"]
+
+def test_write_targets_tee_family():
+    assert write_targets("tee /etc/passwd") == ["/etc/passwd"]
+    assert write_targets("tee -a out.log") == ["out.log"]
+    assert write_targets("Out-File b") == ["b"]
+    assert write_targets("Set-Content -Path p") == ["p"]
+    assert write_targets("cat f") == []
+
+def test_write_target_system_dir_denies():
+    target = "C:/Windows/System32/evil" if sys.platform == "win32" else "/etc/evil"
+    out = evaluate_tool_call("run_command", f"echo hi > {target}", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "deny" and out.tier == "path_guard"
+
+def test_write_target_credential_dir_denies():
+    out = evaluate_tool_call("run_command", "echo key >> ~/.ssh/authorized_keys", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "deny" \
+        and out.tier in ("blocklist", "path_guard")  # blocklist .ssh hits first
+
+def test_write_target_outside_workspace_ask_under_strategy_c():
+    out = evaluate_tool_call("run_command", "printf '%s\\n' x >> ../../outside.md", "C:/ws/sub", "",
+                             ["C:/ws"], allow_network=False, path_policy="strategy_c")
+    assert out is not None and out.decision == "ask" and out.tier == "path_guard"
+
+def test_write_target_outside_workspace_denies_under_strict_deny():
+    out = evaluate_tool_call("run_command", "printf '%s\\n' x >> ../../outside.md", "C:/ws/sub", "",
+                             ["C:/ws"], allow_network=False, path_policy="strict_deny")
+    assert out is not None and out.decision == "deny" and out.tier == "path_guard"
+
+def test_write_target_inside_workspace_falls_through():
+    out = evaluate_tool_call("run_command", "echo hi > src/x.py", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is None  # unchanged: workspace writes still go to Tier 2
+
+def test_tee_target_outside_workspace_denies():
+    # /etc/hosts: system dir, not blocklisted (unlike /etc/passwd) -> path_guard
+    out = evaluate_tool_call("run_command", "echo x | tee /etc/hosts", "C:/ws", "",
+                             ["C:/ws"], allow_network=False, path_policy="strategy_c")
+    assert out is not None and out.decision == "deny" and out.tier == "path_guard"
+
+def test_extra_write_root_allows_redirect_target(tmp_path):
+    artifact = tmp_path / "brain" / "conv1"
+    artifact.mkdir(parents=True)
+    out = evaluate_tool_call("run_command", f"echo x >> {artifact / 'notes.md'}",
+                             "C:/ws", "", ["C:/ws"], allow_network=False,
+                             extra_write_roots=[str(artifact)])
+    assert out is None  # sanctioned artifact root: falls through to Tier 2
+
+def test_quoted_redirect_prose_not_a_target():
+    out = evaluate_tool_call("run_command", 'git commit -m "fix > bug"', "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is None  # quoted > is not an operator; unchanged Tier 2
+
+def test_unexpanded_var_target_falls_through_to_tier2():
+    out = evaluate_tool_call("run_command", "echo x > $HOME/outside.txt", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is None  # cannot resolve $var deterministically; Tier 2 judges
+
+
+# --- destructive git operations ------------------------------------------------------
+
+def test_git_destructive_force_ask():
+    for cmd in ("git reset --hard HEAD~1",
+                "git clean -fd",
+                "git clean -xdf",
+                "git push --force origin main",
+                "git push -f origin main",
+                "git checkout -- .",
+                "git restore ."):
+        out = evaluate_tool_call("run_command", cmd, "C:/ws", "", ["C:/ws"], allow_network=False)
+        assert out is not None and out.decision == "force_ask" \
+            and out.tier == "git_force_ask", cmd
+
+def test_git_force_ask_sees_through_shell_wrapper():
+    out = evaluate_tool_call("run_command", 'cmd /c "git reset --hard"', "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "force_ask" and out.tier == "git_force_ask"
+
+def test_git_benign_not_force_ask():
+    for cmd in ("git push origin main",
+                "git clean -n",
+                "git checkout -b feature/x",
+                "git restore --staged f.txt",
+                'git commit -m "wip"'):
+        out = evaluate_tool_call("run_command", cmd, "C:/ws", "", ["C:/ws"], allow_network=False)
+        assert out is None or out.decision != "force_ask", cmd
+
+def test_git_force_ask_ignores_quoted_prose():
+    assert force_ask_hit('git commit -m "reset --hard stories"') is None
+    out = evaluate_tool_call("run_command", 'git commit -m "reset --hard stories"',
+                             "C:/ws", "", ["C:/ws"], allow_network=False)
+    assert out is None  # prose, and git commit not whitelisted -> Tier 2
+
+
+# --- whitelist expansion ------------------------------------------------------------
+
+def test_whitelist_expansion_readonly_commands():
+    assert is_whitelisted(["printf", "%s\\n", "hello"])
+    assert is_whitelisted(["git", "rev-parse", "HEAD"])
+    assert is_whitelisted(["stat", "file.txt"])
+    assert is_whitelisted(["wc", "-l", "file.txt"])
+    assert is_whitelisted(["diff", "a.txt", "b.txt"])
+    assert is_whitelisted(["which", "python"])
+    assert is_whitelisted(["where", "python"])
+
+def test_printf_command_allows_end_to_end():
+    out = evaluate_tool_call("run_command", "printf '%s\\n' 'just text'", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "allow" and out.tier == "whitelist"
+
+def test_printf_with_redirect_still_guarded():
+    out = evaluate_tool_call("run_command", "printf '%s\\n' 'x' >> /etc/cron.d/evil", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "deny" and out.tier == "path_guard"
+
+def test_grep_o_flag_is_readonly():
+    out = evaluate_tool_call("run_command", "grep -o pattern file.txt", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is not None and out.decision == "allow" and out.tier == "whitelist"
+
+def test_git_log_o_still_falls_to_tier2():
+    # -o stays vetoed outside the known-read-only commands (existing contract)
+    out = evaluate_tool_call("run_command", "git log -o D:/elsewhere/x.txt", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is None
+
+def test_git_diff_output_flag_still_falls_to_tier2():
+    out = evaluate_tool_call("run_command", "git diff --output=D:/elsewhere/x.txt", "C:/ws", "",
+                             ["C:/ws"], allow_network=False)
+    assert out is None

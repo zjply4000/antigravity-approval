@@ -12,7 +12,7 @@ from .jev_client import Verdict
 class Decision:
     decision: str   # allow | deny | ask | force_ask
     reason: str
-    tier: str       # blocklist | whitelist | path_guard | network_gate | write_policy | artifact | jev | fallback
+    tier: str       # blocklist | whitelist | path_guard | network_gate | git_force_ask | write_policy | artifact | jev | fallback
     category: str | None = None
     confidence: float | None = None
     latency_ms: int | None = None
