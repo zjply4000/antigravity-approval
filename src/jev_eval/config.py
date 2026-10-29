@@ -99,6 +99,20 @@ def load_settings(env: Mapping[str, str] | None = None,
             gemini_user = _parse_config_file(Path.home() / ".gemini" / "config" / "jev.env")
             if gemini_user.get("TYPESAFE_API_KEY"):
                 merged["TYPESAFE_API_KEY"] = gemini_user["TYPESAFE_API_KEY"]
+    elif host == "dsh":
+        merged["JEV_LOG_FILE"] = str(Path.home() / ".dsh" / "logs" / "jev_evaluator.log")
+        merged.update(_parse_config_file(Path.home() / ".dsh" / "jev" / "config.json"))
+        d_user = Path(user_file) if user_file else (Path.home() / ".dsh" / "jev.env")
+        merged.update(_parse_config_file(d_user))
+        if ws_path:
+            merged.update(_parse_config_file(ws_path / ".dsh" / "jev" / "config.json"))
+            merged.update(_parse_config_file(ws_path / ".dsh" / "jev.env"))
+        # 同一台机器上三个宿主共用一把 key 是常态，所以 DSH 自己没有配置时
+        # 借用 Antigravity 的用户配置；但 DSH 自己的文件始终优先。
+        if not env.get("TYPESAFE_API_KEY") and not merged.get("TYPESAFE_API_KEY"):
+            gemini_user = _parse_config_file(Path.home() / ".gemini" / "config" / "jev.env")
+            if gemini_user.get("TYPESAFE_API_KEY"):
+                merged["TYPESAFE_API_KEY"] = gemini_user["TYPESAFE_API_KEY"]
     else:
         merged["JEV_LOG_FILE"] = str(Path.home() / ".gemini" / "logs" / "jev_evaluator.log")
         a_json = Path.home() / ".antigravity" / "jev_approval" / "config.json"

@@ -33,6 +33,31 @@ def test_threshold_boundary():
     assert finalize_tier2(make_settings(), v_ok).decision == "allow"
     assert finalize_tier2(make_settings(), v_low).decision == "ask"
 
+def test_category_threshold_relaxes_only_the_named_category():
+    v = Verdict("standard_dev", 0.78, 100)
+    assert finalize_tier2(make_settings(), v).decision == "ask"
+
+    relaxed = finalize_tier2(make_settings(), v, thresholds={"standard_dev": 0.75})
+    assert relaxed.decision == "allow"
+
+    # 门槛生效的证据要在"被拒的那一侧"看：拒绝理由里会写明用的是哪个门槛。
+    below = Verdict("standard_dev", 0.70, 100)
+    rejected = finalize_tier2(make_settings(), below, thresholds={"standard_dev": 0.75})
+    assert rejected.decision == "ask"
+    assert "75" in rejected.reason
+    # 同一条判定在默认门槛下也应被拒，且理由里写的是 96。
+    assert "96" in finalize_tier2(make_settings(), below).reason
+
+def test_category_threshold_cannot_open_a_non_approvable_category():
+    # destructive 不在可放行类别里，给再低的门槛也不能通过。
+    v = Verdict("destructive", 0.99, 100)
+    assert finalize_tier2(make_settings(), v, thresholds={"destructive": 0.10}).decision == "ask"
+
+def test_missing_thresholds_keep_the_original_behaviour():
+    v = Verdict("read_only", 0.80, 100)
+    assert finalize_tier2(make_settings(), v, thresholds=None).decision == "ask"
+    assert finalize_tier2(make_settings(), v, thresholds={}).decision == "ask"
+
 def test_destructive_and_network_escalate():
     assert finalize_tier2(make_settings(), Verdict("destructive", 0.99, 10)).decision == "ask"
     assert finalize_tier2(make_settings(), Verdict("network_outbound", 0.99, 10)).decision == "ask"

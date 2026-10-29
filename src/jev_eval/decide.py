@@ -44,8 +44,15 @@ def extract_args(tool_name: str, args: dict) -> dict:
 from .formatter import format_fallback_reason, format_tier2_reason
 
 def finalize_tier2(settings: Settings, verdict: Verdict | None,
-                   cause: str | None = None) -> Decision:
-    """Matrix rows 5, 6, 8. `cause` carries the tier-2 failure reason when verdict is None."""
+                   cause: str | None = None,
+                   thresholds: dict[str, float] | None = None) -> Decision:
+    """Matrix rows 5, 6, 8. `cause` carries the tier-2 failure reason when verdict is None.
+
+    `thresholds` 让宿主按类别覆盖放行门槛，缺省仍然用 `CONFIDENCE_THRESHOLD`。
+    用来表达"不同宿主有不同的兜底机制"：例如 DSH 在 workspace-write 档位下由
+    沙箱承担了工作区外的约束，因此对 standard_dev 可以放宽；没有沙箱兜底的宿主
+    不传这个参数，行为与原先完全一致。
+    """
     if verdict is None:
         fallback_msg = format_fallback_reason(cause)
         if settings.fail_mode == "open":
@@ -55,14 +62,17 @@ def finalize_tier2(settings: Settings, verdict: Verdict | None,
         return Decision("ask", fallback_msg, "fallback")
     approvable = (verdict.category in ("read_only", "standard_dev")
                   or (verdict.category == "network_outbound" and settings.allow_network_commands))
+    threshold = settings.confidence_threshold
+    if thresholds and verdict.category in thresholds:
+        threshold = thresholds[verdict.category]
     reason = format_tier2_reason(
         verdict.category,
         verdict.confidence,
-        settings.confidence_threshold,
+        threshold,
         approvable=approvable,
         allow_network=settings.allow_network_commands,
     )
-    if approvable and verdict.confidence >= settings.confidence_threshold:
+    if approvable and verdict.confidence >= threshold:
         return Decision("allow", reason, "jev", verdict.category, verdict.confidence,
                         verdict.latency_ms)
     return Decision("ask", reason, "jev",
